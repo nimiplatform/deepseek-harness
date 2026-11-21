@@ -1,7 +1,7 @@
 app_id: ai.nimi.dsh
 public_slug: deepseek-harness
 display_name: Nimi DSH
-version: 0.2.2
+version: 0.2.3
 profile: standalone
 manifest_role: submitted-input
 app_access:

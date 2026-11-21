@@ -1,4 +1,4 @@
-# Release 0.2.2
+# Release 0.2.3
 
 First public Nimi Catalog and hosted Web release of Nimi DSH (adapted from upstream DeepSeek Harness `0.2.2-rc.3`).
 

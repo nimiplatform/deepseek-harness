@@ -1,6 +1,6 @@
 app_id: ai.nimi.dsh
 display_name: Nimi DSH
-version: 0.2.2
+version: 0.2.3
 profile: standalone
 npm_package_name: nimi-dsh
 cargo_package_name: nimi-dsh-shell

@@ -12,10 +12,10 @@ targets:
     arch: arm64
     build_command: pnpm run build:electron:macos
     payload_path: dist-electron-package
-    runtime_entry: payload/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness
+    runtime_entry: payload/NimiDSH.app/Contents/MacOS/NimiDSH
   windows-x86_64:
     os: windows
     arch: x86_64
     build_command: pnpm run build:electron:windows
     payload_path: dist-electron-package
-    runtime_entry: payload/DeepSeek Harness.exe
+    runtime_entry: payload/NimiDSH.exe

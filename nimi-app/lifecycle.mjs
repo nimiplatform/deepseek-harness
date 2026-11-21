@@ -60,11 +60,11 @@ switch (process.argv[2]) {
         ...process.env, DSH_NIMI_LOCAL_BUILD: '1', DSH_NIMI_CUA_RELEASE_DIR: stage,
       })
       const { desktopTargetBuildPaths } = await import('../apps/desktop/scripts/desktop-build-paths.mjs')
-      const source = join(desktopTargetBuildPaths('mac-arm64', process.env).unsignedArtifacts, 'mac-arm64', 'DeepSeek Harness.app')
+      const source = join(desktopTargetBuildPaths('mac-arm64', process.env).unsignedArtifacts, 'mac-arm64', 'NimiDSH.app')
       readCuaApplication(join(source, 'Contents/Resources/app.asar.unpacked/dsh/node_modules',
         '@deepseek-ai/dsh-cua-macos/native/bin/darwin-arm64'))
       const outputRoot = join(appDir, 'dist-electron-package')
-      const destination = join(outputRoot, 'DeepSeek Harness.app')
+      const destination = join(outputRoot, 'NimiDSH.app')
       await rm(outputRoot, { recursive: true, force: true })
       await mkdir(outputRoot, { recursive: true })
       await cp(source, destination, { recursive: true, verbatimSymlinks: true })
@@ -83,7 +83,7 @@ switch (process.argv[2]) {
     const outputRoot = join(appDir, 'dist-electron-package')
     await rm(outputRoot, { recursive: true, force: true })
     await cp(source, outputRoot, { recursive: true })
-    await access(join(outputRoot, 'DeepSeek Harness.exe'))
+    await access(join(outputRoot, 'NimiDSH.exe'))
     break
   }
   case 'test':
