@@ -822,6 +822,9 @@ final class AXAccess {
         }
         throw NativeFailure(code: "WINDOW_UNAVAILABLE", message: "Pointer input requires an enclosing window or sheet. For a menu item’s default action, use app.invoke(id)")
     }
+    func resolveEnclosingWindow(owner: ProcessIdentity, windowID: UInt32, element: AXUIElement) throws -> WindowInfo {
+        try WindowGeometry.resolve(owner: owner, windowID: windowID) { try bounds(element) }
+    }
     /// A system file panel renders in its host window but receives input in the panel service's window.
     func filePanelRecipient(_ node: AXUIElement, owner: ProcessIdentity, catalog: ApplicationCatalogSnapshot, budget: inout AXChildRecoveryBudget) throws -> (process: ProcessIdentity, windowID: UInt32)? {
         let identifier: String?
