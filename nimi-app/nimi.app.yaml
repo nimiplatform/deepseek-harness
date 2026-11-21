@@ -1,6 +1,7 @@
 app_id: ai.nimi.dsh
+public_slug: deepseek-harness
 display_name: Nimi DSH
-version: 0.2.2-rc.3.20261118.6
+version: 0.2.2
 profile: standalone
 manifest_role: submitted-input
 app_access:
@@ -18,9 +19,105 @@ storage_policy:
     - path_pattern: <user-home>/.nimi-dsh/**
       purpose: Account-partitioned sessions, workspace files, and App settings.
       expected_size_band: Depends on the number and size of tasks.
+safety_profile:
+  intended_audience: general
+  content_descriptors: []
+  ai:
+    direct_interaction: true
+    interaction_notice: absent
+    risk_features: []
+    subject_notice: not-applicable
+    outputs:
+      - modality: text
+        exposure: exportable
+        publication_control: not-applicable
+        in_product_notice: absent
+        export_visible_marking: absent
+        machine_readable_marking: absent
+  data_practices:
+    publisher_direct_external_network: false
+    telemetry: []
+    third_party_account: none
+    user_content_sharing: none
+    commercial_features: []
+    sensitive_data_categories: []
+  high_impact_decision_uses: []
 metadata:
-  summary: Use DeepSeek Harness with the model configured in Nimi Home.
+  summary: Local coding and file-work agent harness adapted from DeepSeek Harness, powered by Nimi Home models with a remote Web companion.
   icon: icon.png
+  release_notes: RELEASE_NOTES.md
+  author: DeepSeek Harness contributors and Nimi Platform
+  homepage_url: https://github.com/nimiplatform/deepseek-harness
+  support_url: https://github.com/nimiplatform/deepseek-harness/issues
+  storefront:
+    category: developer-tools
+    default_locale: en
+    locales:
+      en:
+        tags:
+          - Coding Agent
+          - Workspace
+          - Tool Approval
+          - Remote Companion
+          - Local-First
+        highlights:
+          - title: Local Agent Workspace
+            description: Run DeepSeek Harness coding, file editing, and terminal sessions locally inside workspaces you choose on Windows x64 and macOS arm64.
+          - title: Nimi Home Model Routing
+            description: Pick ready cloud connectors or on-device models from Nimi Home with named configurations, drift protection, and reasoning controls.
+          - title: Remote Web Companion
+            description: Start or continue desktop sessions from the browser, stream progress, review file diffs, approve tool actions, and transfer files up to 32 MiB.
+          - title: Account-Scoped Local Storage
+            description: Keep session transcripts and workspace files on your PC under account-partitioned ~/.nimi-dsh storage with telemetry disabled.
+      zh:
+        display_name: Nimi DSH
+        summary: 基于 DeepSeek Harness 适配的本地代码与文件协作 Agent 工作区，接入 Nimi Home 模型管理并提供远程 Web 伴侣。
+        introduction: NIMI_APP.zh.md
+        tags:
+          - 编程 Agent
+          - 本地工作区
+          - 工具审批
+          - 远程伴侣
+          - 开源适配
+        highlights:
+          - title: 本地 Agent 编程工作区
+            description: 在 Windows x64 与 macOS arm64 上运行 DeepSeek Harness，在指定本地目录内完成代码编写、文件修改与终端协作。
+          - title: Nimi Home 统一模型路由
+            description: 直接选用 Nimi Home 已就绪的云端连接器或本地模型，支持命名配置管理、配置变更保护与推理强度调节。
+          - title: 远程 Web 伴侣与审批
+            description: 从浏览器连接主 PC 桌面会话，实时查看流式输出、审阅文件与命令提案、按次审批并双向传输工作区文件。
+          - title: 账号隔离的本地数据存储
+            description: 会话历史与工作区绑定按账号隔离保存在本机 ~/.nimi-dsh 目录，关闭上游遥测统计，掌控本地隐私。
+    media:
+      cover:
+        path: assets/storefront/cover-en.webp
+        locales:
+          zh: assets/storefront/cover-zh.webp
+      gallery:
+        - id: workspace-diff
+          kind: image
+          path: assets/storefront/workspace-diff-en.webp
+          locales:
+            zh: assets/storefront/workspace-diff-zh.webp
+          caption:
+            en: "Workspace diff review: inspect changed files and line-level code edits side by side with the agent conversation"
+            zh: 工作区改动审阅：与 Agent 对话并排查看改动文件列表和逐行代码差异
+        - id: nimi-models
+          kind: image
+          path: assets/storefront/nimi-models-en.webp
+          locales:
+            zh: assets/storefront/nimi-models-zh.webp
+          caption:
+            en: "Nimi model routing: switch between ready cloud connectors and local loadouts with named configurations managed through Nimi Home"
+            zh: Nimi 模型路由：通过 Nimi Home 管理命名配置，在已就绪的云端连接器与本地模型之间灵活切换
+        - id: remote-companion
+          kind: image
+          path: assets/storefront/remote-companion-en.webp
+          locales:
+            zh: assets/storefront/remote-companion-zh.webp
+          caption:
+            en: "Remote Web Companion: review concrete file-edit diffs, approve or deny tool actions, and upload or download workspace files from your browser"
+            zh: 远程 Web 伴侣：在浏览器中审阅具体文件改动差异、按次审批或拒绝工具操作，并双向传输工作区文件
 local_development:
   electron:
     renderer_origin: http://127.0.0.1:4143

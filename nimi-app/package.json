@@ -1,6 +1,6 @@
 {
   "name": "nimi-dsh",
-  "version": "0.2.2-rc.3.20261118.6",
+  "version": "0.2.2",
   "private": true,
   "type": "module",
   "author": "DeepSeek Harness contributors and Nimi Platform",
@@ -9,6 +9,7 @@
   "scripts": {
     "build:electron": "node lifecycle.mjs host",
     "build:electron:macos": "node lifecycle.mjs package-macos",
+    "build:electron:windows": "node lifecycle.mjs package-windows",
     "test:app": "node lifecycle.mjs test",
     "pack": "nimi-app pack",
     "dev:renderer": "node lifecycle.mjs renderer",
@@ -20,6 +21,7 @@
     "sync": "nimi-app sync",
     "build:settings": "tsc --noEmit && vite build",
     "build:web": "tsc --noEmit && vite build --config vite.web.config.ts --mode web-release",
+    "build:web:release": "tsc --noEmit && vite build --config vite.web.config.ts --mode web-release",
     "build:web:local": "tsc --noEmit && vite build --config vite.web.config.ts"
   },
   "dependencies": {
@@ -37,7 +39,7 @@
     "tailwindcss": "^4.3.3",
     "vite": "^8.3.8",
     "typescript": "^6.0.3",
-    "@nimiplatform/app-tools": "^0.16.0-rc.10",
+    "@nimiplatform/app-tools": "^0.16.0-rc.12",
     "@nimiplatform/nimi-coding": "0.7.0"
   }
 }

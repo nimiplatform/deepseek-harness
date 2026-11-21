@@ -67,7 +67,7 @@ export function createElectronBuilderConfig(
   if (skipNotarization && (unsigned || resolvedPlatform !== 'darwin')) throw new Error('Skipping notarization requires a signed macOS build')
   const packagesMacOS = targetPlatform === 'darwin' || (targetPlatform === undefined && hostPlatform === 'darwin')
   const packagesWindows = resolvedPlatform === 'win32'
-  const policy = packagesMacOS && unsigned ? undefined : resolveDesktopPolicyEnvironment(env)
+  const policy = (packagesMacOS || env.DSH_NIMI_LOCAL_BUILD === '1') && unsigned ? undefined : resolveDesktopPolicyEnvironment(env)
   if (resolvedPlatform === 'win32') installWindowsDirectoryInstaller()
   const macOSSigning = packagesMacOS && !unsigned ? resolveMacOSSigningEnvironment(env) : undefined
   if (packagesMacOS && !unsigned && !skipNotarization) resolveMacOSNotarizationEnvironment(env)
@@ -128,7 +128,7 @@ export function createElectronBuilderConfig(
     electronDist: buildPaths.electron,
     electronFuses: { runAsNode: true },
     beforeBuild: async () => {
-      if (resolvedPlatform !== 'win32') return true
+      if (resolvedPlatform !== 'win32' || (env.DSH_NIMI_LOCAL_BUILD === '1' && unsigned)) return true
       await promisify(execFile)('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
         fileURLToPath(new URL('./prepare-windows-installer.ps1', import.meta.url)),
         '-OutputDirectory', join(buildPaths.root, 'installer-ui')], {

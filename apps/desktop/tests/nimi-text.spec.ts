@@ -169,7 +169,7 @@ describe('Nimi text IPC server', () => {
     expect(submit).toHaveBeenCalledWith(expect.objectContaining({
       type: 'speech-transcribe',
       responseFormat: '',
-    }), { configRef: 'a'.repeat(32) })
+    }))
     bridge.dispose()
   })
 

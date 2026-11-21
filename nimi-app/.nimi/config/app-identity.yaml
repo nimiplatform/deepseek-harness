@@ -1,6 +1,6 @@
 app_id: ai.nimi.dsh
 display_name: Nimi DSH
-version: 0.2.2-rc.3.20261118.6
+version: 0.2.2
 npm_package_name: nimi-dsh
 cargo_package_name: nimi-dsh-shell
 tauri_identifier: ai.nimi.apps.ai.nimi.dsh

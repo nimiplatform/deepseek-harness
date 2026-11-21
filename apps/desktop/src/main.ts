@@ -97,6 +97,9 @@ if (app.isPackaged && !managedByNimi) {
 if (managedByNimi) {
   configureNimiElectronAppHostProfile(app)
   app.setName('Nimi DSH')
+  if (process.platform === 'win32') {
+    app.setAppUserModelId(app.isPackaged ? 'ai.nimi.apps.ai.nimi.dsh' : 'ai.nimi.dev.apps.ai.nimi.dsh')
+  }
 }
 const nimiKit = managedByNimi ? await import('@nimiplatform/kit/shell/electron/main') : undefined
 const productRoot = managedByNimi && !app.isPackaged ? fileURLToPath(new URL('../', import.meta.url)) : app.getAppPath()

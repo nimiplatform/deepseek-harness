@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { loadDesktopPackageEnvironment, localMacOSPackageEnvironment, validateDesktopPackageEnvironment } from '../scripts/desktop-package-environment.mjs'
+import { loadDesktopPackageEnvironment, localMacOSPackageEnvironment, localWindowsPackageEnvironment, validateDesktopPackageEnvironment } from '../scripts/desktop-package-environment.mjs'
 import { resolveWindowsPackageSettings } from '../scripts/windows-package-settings.mjs'
 
 const WINDOWS = { platform: 'win32', arch: 'x64' } as const
@@ -119,6 +119,24 @@ describe('Desktop local packaging configuration', () => {
     expect(() => { validateDesktopPackageEnvironment(local, MACOS, { unsigned: true }) }).not.toThrow()
     expect(parent.DSH_DESKTOP_UNSIGNED).toBe('0')
     expect(parent.DSH_DESKTOP_APP_ID).toBe('com.example.release')
+  })
+
+  it('selects Windows Nimi local defaults without requiring release dotenv files', () => {
+    const parent = {
+      PATH: 'build-tools',
+      DSH_NIMI_LOCAL_BUILD: '1',
+      DSH_DESKTOP_APP_ID: 'com.example.release',
+      DSH_DESKTOP_UNSIGNED: '0',
+      DSH_DESKTOP_WINDOWS_TOKEN_PIN: 'secret-pin',
+    }
+    const local = localWindowsPackageEnvironment(parent)
+    expect(local).toEqual({
+      PATH: parent.PATH,
+      DSH_NIMI_LOCAL_BUILD: '1',
+      DSH_DESKTOP_APP_ID: 'ai.nimi.apps.ai.nimi.dsh',
+      DSH_DESKTOP_UNSIGNED: '1',
+    })
+    expect(() => { validateDesktopPackageEnvironment(local, WINDOWS, { unsigned: true }) }).not.toThrow()
   })
 
   it('takes cache concurrency from the Windows file and defaults to four without ambient overrides', async () => {

@@ -1,7 +1,8 @@
 /** Use the existing DSH renderer, Electron build, and production resource staging. */
-import { copyFile, cp, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { access, copyFile, cp, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { spawn } from 'node:child_process'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 
 const repo = resolve(import.meta.dirname, '..')
@@ -9,9 +10,20 @@ const appDir = import.meta.dirname
 const appPackage = JSON.parse(await readFile(join(appDir, 'package.json'), 'utf8'))
 const { packageManager } = JSON.parse(await readFile(join(repo, 'package.json'), 'utf8'))
 
+function spawnCorepack(args, cwd, env = process.env) {
+  if (process.platform === 'win32') {
+    const corepackJs = join(dirname(process.execPath), 'node_modules', 'corepack', 'dist', 'corepack.js')
+    if (existsSync(corepackJs)) {
+      return spawn(process.execPath, [corepackJs, ...args], { cwd, stdio: 'inherit', env })
+    }
+    return spawn('corepack.cmd', args, { cwd, stdio: 'inherit', env, shell: true })
+  }
+  return spawn('corepack', args, { cwd, stdio: 'inherit', env })
+}
+
 async function run(args, env = process.env) {
   await new Promise((done, reject) => {
-    const child = spawn('corepack', [packageManager, ...args], { cwd: repo, stdio: 'inherit', env })
+    const child = spawnCorepack([packageManager, ...args], repo, env)
     child.on('error', reject)
     child.on('exit', (code, signal) => code === 0 ? done() : reject(new Error(`DSH command failed (${code ?? signal}): ${args.join(' ')}`)))
   })
@@ -19,7 +31,7 @@ async function run(args, env = process.env) {
 
 async function buildSettings() {
   await new Promise((done, reject) => {
-    const child = spawn('corepack', [appPackage.packageManager, 'run', 'build:settings'], { cwd: appDir, stdio: 'inherit' })
+    const child = spawnCorepack([appPackage.packageManager, 'run', 'build:settings'], appDir)
     child.on('error', reject)
     child.on('exit', code => code === 0 ? done() : reject(new Error(`Nimi settings build failed (${code})`)))
   })
@@ -44,19 +56,34 @@ switch (process.argv[2]) {
       await run(['exec', '/usr/bin/xcrun', 'python3', 'packages/experimental/cua-macos/native/build_app.py',
         '--output-directory', stage, '--arch', 'arm64', '--variant', 'release'])
       readCuaApplication(stage)
-      await run(['--filter', '@deepseek-ai/dsh-desktop', 'run', 'package:mac:arm64:unsigned', '--dir', '--build-version', appPackage.version], {
+      await run(['--filter', '@deepseek-ai/dsh-desktop', 'run', 'package:mac:arm64:unsigned', '--dir'], {
         ...process.env, DSH_NIMI_LOCAL_BUILD: '1', DSH_NIMI_CUA_RELEASE_DIR: stage,
       })
       const { desktopTargetBuildPaths } = await import('../apps/desktop/scripts/desktop-build-paths.mjs')
       const source = join(desktopTargetBuildPaths('mac-arm64', process.env).unsignedArtifacts, 'mac-arm64', 'DeepSeek Harness.app')
       readCuaApplication(join(source, 'Contents/Resources/app.asar.unpacked/dsh/node_modules',
         '@deepseek-ai/dsh-cua-macos/native/bin/darwin-arm64'))
-      const destination = join(appDir, 'dist-electron-package', 'DeepSeek Harness.app')
-      await rm(destination, { recursive: true, force: true })
+      const outputRoot = join(appDir, 'dist-electron-package')
+      const destination = join(outputRoot, 'DeepSeek Harness.app')
+      await rm(outputRoot, { recursive: true, force: true })
+      await mkdir(outputRoot, { recursive: true })
       await cp(source, destination, { recursive: true, verbatimSymlinks: true })
     } finally {
       await rm(stage, { recursive: true, force: true })
     }
+    break
+  }
+  case 'package-windows': {
+    await buildSettings()
+    await run(['--filter', '@deepseek-ai/dsh-desktop', 'run', 'package:win:x64:unsigned', '--dir'], {
+      ...process.env, DSH_NIMI_LOCAL_BUILD: '1',
+    })
+    const { desktopTargetBuildPaths } = await import('../apps/desktop/scripts/desktop-build-paths.mjs')
+    const source = join(desktopTargetBuildPaths('win-x64', process.env).unsignedArtifacts, 'win-unpacked')
+    const outputRoot = join(appDir, 'dist-electron-package')
+    await rm(outputRoot, { recursive: true, force: true })
+    await cp(source, outputRoot, { recursive: true })
+    await access(join(outputRoot, 'DeepSeek Harness.exe'))
     break
   }
   case 'test':
@@ -72,5 +99,5 @@ switch (process.argv[2]) {
     ])
     break
   default:
-    throw new Error('Choose host, renderer, package-macos, or test.')
+    throw new Error('Choose host, renderer, package-macos, package-windows, or test.')
 }

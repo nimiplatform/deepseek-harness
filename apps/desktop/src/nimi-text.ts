@@ -74,6 +74,7 @@ const MAX_IMAGE_BYTES = 32 * 1024 * 1024
  * fall back to allowing ready targets.
  */
 function supportsStreamingToolUse(target: {
+  readonly state?: string
   readonly textBehaviors?: readonly {
     readonly kind?: string
     readonly configurationState?: string
@@ -496,7 +497,7 @@ async function runAudioTranscription(
     responseFormat: '',
     ...(input.timestamps === undefined ? {} : { timestamps: input.timestamps }),
     audioSource: { type: 'bytes', bytes: input.bytes },
-  }, input.configRef ? { configRef: input.configRef } : undefined)
+  })
   let job = submitted.job
   const isTerminal = (status: string) =>
     status === 'completed' || status === 'failed' || status === 'canceled' || status === 'timeout'

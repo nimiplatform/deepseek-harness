@@ -27,7 +27,7 @@
     "@deepseek-ai/dsh-plugin-manager": "workspace:*"
   },
   "devDependencies": {
-    "@nimiplatform/sdk": "0.24.0-rc.11",
+    "@nimiplatform/sdk": "0.24.0-rc.10",
     "ws": "^8.21.3",
     "@types/ws": "^8.18.1",
     "@deepseek-ai/dsh-api-gateway": "workspace:*",
