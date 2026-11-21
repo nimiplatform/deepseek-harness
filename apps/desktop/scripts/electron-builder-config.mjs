@@ -3,7 +3,8 @@ import { officePackageDirectories } from '../../../scripts/libreoffice-packages.
 import { X509Certificate } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
-import { join, relative, sep } from 'node:path'
+import { dirname, join, relative, sep } from 'node:path'
+import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -111,6 +112,7 @@ export function createElectronBuilderConfig(
     protocols: [{ name: 'DeepSeek Harness', schemes: ['dsh'] }],
     extraMetadata: {
       dshDesktopAppId: appId,
+      ...(appId === 'ai.nimi.apps.ai.nimi.dsh' ? { nimiManagedDesktop: true } : {}),
       dshDesktopUpdateChannel: update?.channel ?? 'nightly',
       ...(policy === undefined ? {} : { dshMandatoryUpdatePolicy: policy }),
       ...buildVersion === productVersion ? {} : { version: buildVersion },
@@ -144,6 +146,8 @@ export function createElectronBuilderConfig(
       'lib/operation-report-worker.js',
       'lib/welcome/**/*',
       'lib/preload-app.cjs',
+      'lib/preload-nimi.cjs',
+      'lib/nimi/**/*',
       'lib/preload-mandatory.cjs',
       'lib/preload-platform-account.cjs',
       'lib/preload-update-dialog.cjs',
@@ -159,6 +163,12 @@ export function createElectronBuilderConfig(
     asarUnpack: unpack,
     extraResources: [
       { from: buildPaths.runtime, to: 'runtime' },
+      // Match the installed Kit carrier layout used by the Nimi Electron scaffold.
+      ...(appId === 'ai.nimi.apps.ai.nimi.dsh' && resolvedPlatform === 'darwin' && resolvedArch === 'arm64' ? [{
+        from: dirname(createRequire(createRequire(import.meta.url).resolve('@nimiplatform/kit/shell/electron/main'))
+          .resolve('@nimiplatform/kit-protected-local-darwin-arm64')),
+        to: 'nimi-native/protected-local', filter: ['index.cjs', 'nimi_shell_protected_local.node'],
+      }] : []),
       { from: fileURLToPath(new URL('../resources/icon-windows.png', import.meta.url)), to: 'icon.png' },
       // Windows tray bitmaps; macOS keeps the Dock and ships no menu bar icon.
       ...(packagesWindows ? [{ from: fileURLToPath(new URL('../resources/tray-windows.ico', import.meta.url)), to: 'tray.ico' }] : []),

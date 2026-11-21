@@ -11,6 +11,14 @@
 /** Simplified Chinese dictionary (the key-set source of truth). */
 export const zh = {
   'provider.account': 'DeepSeek 账号',
+  'provider.nimiSaved': 'Nimi 已保存配置',
+  'provider.nimiLocal': 'Nimi 本机模型 (Local)',
+  'provider.nimiCloud': 'Nimi 云端 · {name}',
+  'filter.all': '全部',
+  'filter.cloud': '云端',
+  'filter.local': '本机',
+  'filter.saved': '已保存',
+  'nimi.localUnconfigured': '在 Nimi Home 中配置本机模型',
   'command.label': '模型',
   'command.description': '选择本会话使用的模型',
   'option.loadError': '目录加载失败：{message}',
@@ -41,6 +49,14 @@ export type ModelKey = keyof typeof zh
 /** English dictionary, checked complete against the zh key set. */
 export const en = {
   'provider.account': 'DeepSeek Account',
+  'provider.nimiSaved': 'Nimi Saved Configs',
+  'provider.nimiLocal': 'Nimi On-device (Local)',
+  'provider.nimiCloud': 'Nimi Cloud · {name}',
+  'filter.all': 'All',
+  'filter.cloud': 'Cloud',
+  'filter.local': 'Local',
+  'filter.saved': 'Saved',
+  'nimi.localUnconfigured': 'Configure on-device model in Nimi Home',
   'command.label': 'Model',
   'command.description': 'Select the model for this conversation',
   'option.loadError': 'Catalog failed to load: {message}',
@@ -68,6 +84,14 @@ export const en = {
 /** Japanese copy, checked against the English keys. */
 export const ja = {
   'provider.account': 'DeepSeek アカウント',
+  'provider.nimiSaved': 'Nimi 保存済み設定',
+  'provider.nimiLocal': 'Nimi ローカルモデル (Local)',
+  'provider.nimiCloud': 'Nimi クラウド · {name}',
+  'filter.all': 'すべて',
+  'filter.cloud': 'クラウド',
+  'filter.local': 'ローカル',
+  'filter.saved': '保存済み',
+  'nimi.localUnconfigured': 'Nimi Home でローカルモデルを設定',
   'command.label': 'モデル',
   'command.description': 'この会話で使用するモデルを選択',
   'option.loadError': 'カタログの読み込みに失敗しました: {message}',
@@ -95,6 +119,14 @@ export const ja = {
 /** Spanish dictionary, checked against the English keys. */
 export const es = {
   'provider.account': 'Cuenta DeepSeek',
+  'provider.nimiSaved': 'Configuraciones Nimi',
+  'provider.nimiLocal': 'Nimi Local',
+  'provider.nimiCloud': 'Nimi Nube · {name}',
+  'filter.all': 'Todos',
+  'filter.cloud': 'Nube',
+  'filter.local': 'Local',
+  'filter.saved': 'Guardados',
+  'nimi.localUnconfigured': 'Configurar modelo local en Nimi Home',
   'command.label': 'modelo',
   'command.description': 'Selecciona el modelo para esta conversación',
   'option.loadError': 'No se pudo cargar el catálogo: {message}',
@@ -122,6 +154,14 @@ export const es = {
 /** French dictionary, checked against the English keys. */
 export const fr = {
   'provider.account': 'Compte DeepSeek',
+  'provider.nimiSaved': 'Configurations Nimi',
+  'provider.nimiLocal': 'Nimi Local',
+  'provider.nimiCloud': 'Nimi Cloud · {name}',
+  'filter.all': 'Tous',
+  'filter.cloud': 'Cloud',
+  'filter.local': 'Local',
+  'filter.saved': 'Enregistrés',
+  'nimi.localUnconfigured': 'Configurer un modèle local dans Nimi Home',
   'command.label': 'Modèle',
   'command.description': 'Sélectionnez le modèle pour cette conversation',
   'option.loadError': 'Échec du chargement du catalogue : {message}',
@@ -149,6 +189,14 @@ export const fr = {
 /** German dictionary, checked against the English keys. */
 export const de = {
   'provider.account': 'DeepSeek-Konto',
+  'provider.nimiSaved': 'Nimi Konfigurationen',
+  'provider.nimiLocal': 'Nimi Lokal',
+  'provider.nimiCloud': 'Nimi Cloud · {name}',
+  'filter.all': 'Alle',
+  'filter.cloud': 'Cloud',
+  'filter.local': 'Lokal',
+  'filter.saved': 'Gespeichert',
+  'nimi.localUnconfigured': 'Lokales Modell in Nimi Home einrichten',
   'command.label': 'Modell',
   'command.description': 'Wählen Sie das Modell für dieses Gespräch aus',
   'option.loadError': 'Katalog konnte nicht geladen werden: {message}',
@@ -176,6 +224,14 @@ export const de = {
 /** Russian dictionary, checked against the English keys. */
 export const ru = {
   'provider.account': 'DeepSeek Аккаунт',
+  'provider.nimiSaved': 'Сохранённые Nimi',
+  'provider.nimiLocal': 'Nimi Локально',
+  'provider.nimiCloud': 'Nimi Облако · {name}',
+  'filter.all': 'Все',
+  'filter.cloud': 'Облако',
+  'filter.local': 'Локально',
+  'filter.saved': 'Сохранённые',
+  'nimi.localUnconfigured': 'Настроить локальную модель в Nimi Home',
   'command.label': 'Модель',
   'command.description': 'Выберите модель для этого разговора',
   'option.loadError': 'Не удалось загрузить каталог: {message}.',
@@ -203,6 +259,14 @@ export const ru = {
 /** Portuguese dictionary, checked against the English keys. */
 export const pt = {
   'provider.account': 'DeepSeek Conta',
+  'provider.nimiSaved': 'Configurações Nimi',
+  'provider.nimiLocal': 'Nimi Local',
+  'provider.nimiCloud': 'Nimi Nuvem · {name}',
+  'filter.all': 'Todos',
+  'filter.cloud': 'Nuvem',
+  'filter.local': 'Local',
+  'filter.saved': 'Salvos',
+  'nimi.localUnconfigured': 'Configurar modelo local no Nimi Home',
   'command.label': 'Modelo',
   'command.description': 'Selecione o modelo para esta conversa',
   'option.loadError': 'Falha ao carregar o catálogo: {message}',

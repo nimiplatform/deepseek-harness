@@ -39,6 +39,14 @@ import { DesktopChannelSource } from './desktop-channel-source.ts'
 import { DesktopChannelRow, DesktopChannelToast } from './DesktopChannelRow.tsx'
 import { DesktopUpdateSource } from './desktop-update-source.ts'
 import { CloseLabel, HeaderContent, TriggerContent } from './chrome.tsx'
+import { NimiSettingsRow } from './NimiSettingsRow.tsx'
+import { NimiDesktopSource, type PartialNimiDesktopBridge } from './nimi-source.ts'
+import { NimiBrandMark, NimiBrandName } from './NimiBrand.tsx'
+import { NimiAccountLauncher, type NimiAccountLauncherInjected } from './NimiAccountLauncher.tsx'
+import { NimiAccountSection, type NimiAccountSectionInjected } from './NimiAccountSection.tsx'
+import { NimiModelsSection, type NimiModelsSectionInjected } from './NimiModelsSection.tsx'
+import { NimiIntegrationsSection, type NimiIntegrationsSectionInjected } from './NimiIntegrationsSection.tsx'
+import { NimiAccessGateOverlay, type NimiAccessGateInjected } from './NimiAccessGateOverlay.tsx'
 import { GeneralSection } from './GeneralSection.tsx'
 import { CurrentVersionRow } from './CurrentVersionRow.tsx'
 import { DeveloperToolsRow, type DeveloperToolsRowInjected } from './DeveloperToolsRow.tsx'
@@ -103,7 +111,26 @@ export function apply(ctx: ClientContext): void {
   }, CurrentVersionRow))
   ctx.effect(() => ctx.locale.register(NS, { zh, en, ja, es, fr, de, ru, pt }), 'ui-settings-general: dictionaries')
   const connection = ctx.get('connection') as ConnectionHandle
-  const carrier = (globalThis as typeof globalThis & { dshDesktop?: { protocolVersion: number; updates?: DesktopUpdateBridge } }).dshDesktop
+  const carrier = (globalThis as typeof globalThis & {
+    dshDesktop?: { protocolVersion: number; updates?: DesktopUpdateBridge; nimi?: PartialNimiDesktopBridge }
+  }).dshDesktop
+  const nimi = carrier?.protocolVersion === 1 ? carrier.nimi : undefined
+  const nimiSource = nimi ? new NimiDesktopSource(nimi) : undefined
+  if (nimiSource) {
+    ctx.effect(() => () => { nimiSource.dispose() }, 'ui-settings-general: nimi desktop state')
+  }
+  const openSession = (sessionId: string): void => {
+    const nav = ctx.get('workspaceNavigation' as never) as { openSession?(id: string): void } | undefined
+    nav?.openSession?.(sessionId)
+  }
+  const subscribeOpenSession = nimi?.subscribeOpenSession
+  if (subscribeOpenSession !== undefined) {
+    ctx.effect(() => subscribeOpenSession(openSession), 'ui-settings-general: nimi open session')
+  }
+  if (nimi && !nimi.aiConfig) ctx.slots.inject('settings.general.item', () => ctx.slots.register({
+    name: 'settings.general.item', id: 'nimi-settings', order: 90, locale: NS,
+    inject: () => ({ openNimiSettings: () => nimi.openSettings() }),
+  }, NimiSettingsRow))
   const desktopUpdate = new DesktopUpdateSource(carrier?.protocolVersion === 1 ? carrier.updates : undefined)
   ctx.effect(() => () => { desktopUpdate.dispose() }, 'ui-settings-general: desktop update carrier')
   const channelBridge = carrier?.protocolVersion === 1 ? carrier.updates?.channels : undefined
@@ -130,6 +157,74 @@ export function apply(ctx: ClientContext): void {
   // seat, and the nav label is a thunk the owner resolves per render — no
   // locale/change re-registration wiring.
   const t = ctx.locale.bind(NS)
+  // Managed desktop replaces upstream account, branding, and credential pages with native Option A Nimi surfaces.
+  if (nimi && nimiSource) {
+    ctx.slots.inject('sidebar.brand.mark', () =>
+      ctx.slots.inject('sidebar.brand.name', function* () {
+        yield ctx.slots.register({ name: 'sidebar.brand.mark' }, NimiBrandMark)
+        yield ctx.slots.register({ name: 'sidebar.brand.name' }, NimiBrandName)
+      }))
+    ctx.slots.inject('conversation.hero.brand.mark' as 'sidebar.brand.mark', () =>
+      ctx.slots.register({ name: 'conversation.hero.brand.mark' as 'sidebar.brand.mark' }, NimiBrandMark))
+    ctx.slots.inject('settings.launcher', () => ctx.slots.register({
+      name: 'settings.launcher',
+      locale: NS,
+      inject: (): NimiAccountLauncherInjected => ({
+        hooks: { nimiState: nimiSource.store },
+        openHome: section => nimiSource.openHome(section),
+        recheck: () => nimiSource.recheck(),
+      }),
+    }, NimiAccountLauncher))
+    ctx.slots.inject('settings.section', () => ctx.slots.register({
+      name: 'settings.section',
+      id: 'account',
+      order: 5,
+      locale: NS,
+      label: () => t('nimi.nav.account'),
+      inject: (): NimiAccountSectionInjected => ({
+        hooks: { nimiState: nimiSource.store },
+        openHome: section => nimiSource.openHome(section),
+        recheck: () => nimiSource.recheck(),
+        ...(typeof nimi.importHomeChat === 'function'
+          ? { importHomeChat: (sourceJson: string) => nimiSource.importHomeChat(sourceJson), openSession }
+          : {}),
+      }),
+    }, NimiAccountSection))
+    ctx.slots.inject('settings.section', () => ctx.slots.register({
+      name: 'settings.section',
+      id: 'models',
+      order: 10,
+      locale: NS,
+      label: () => t('nimi.nav.models'),
+      inject: (): NimiModelsSectionInjected => ({
+        openNimiSettings: () => nimi.openSettings(),
+        openHome: section => nimiSource.openHome(section),
+        adoptLatestRevision: configRef => nimiSource.adoptLatestRevision(configRef),
+        ...(nimi.aiConfig ? { aiConfig: nimi.aiConfig } : {}),
+      }),
+    }, NimiModelsSection))
+    ctx.slots.inject('settings.section', () => ctx.slots.register({
+      name: 'settings.section',
+      id: 'integrations',
+      order: 15,
+      locale: NS,
+      label: () => t('nimi.nav.integrations'),
+      inject: (): NimiIntegrationsSectionInjected => ({
+        listCatalog: () => nimi.integrations ? nimi.integrations.listCatalog() : Promise.resolve([]),
+        openHome: section => nimiSource.openHome(section),
+      }),
+    }, NimiIntegrationsSection))
+    ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+      name: 'shell.overlay',
+      id: 'nimi-access-gate',
+      locale: NS,
+      inject: (): NimiAccessGateInjected => ({
+        hooks: { nimiState: nimiSource.store },
+        openHome: section => nimiSource.openHome(section),
+        recheck: () => nimiSource.recheck(),
+      }),
+    }, NimiAccessGateOverlay))
+  }
   // The shared ConfigForm mirror updates after document commits and reconnects.
   const documentController = ctx.remote.$host.isLoopback
     ? new SettingsDocumentStore(ctx, ctx.configForms.describe())
@@ -229,6 +324,11 @@ export function apply(ctx: ClientContext): void {
         },
       })
 
+      const disposeNimiOpenSettings = nimi && typeof nimi.subscribeOpenSettings === 'function'
+        ? nimi.subscribeOpenSettings((section) => {
+          shellInstance.actions.openSection(section ?? 'models')
+        })
+        : undefined
       const disposeSlot = ctx.slots.register({
         name: 'sidebar.settings',
         locale: NS,
@@ -245,7 +345,7 @@ export function apply(ctx: ClientContext): void {
         },
         inject: shellInjected,
       }, SettingsRoot)
-      return () => { disposeCommand(); disposeSlot() }
+      return () => { disposeNimiOpenSettings?.(); disposeCommand(); disposeSlot() }
     }))
 
   ctx.slots.inject('settings.trigger', () =>

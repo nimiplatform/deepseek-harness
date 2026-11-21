@@ -5,7 +5,7 @@ import BasicCompactionEngine from '@deepseek-ai/dsh-compaction-basic'
 import type { BasicCompactionConfig } from '@deepseek-ai/dsh-compaction-basic'
 import { selectCompactableRange } from '@deepseek-ai/dsh-compaction-basic/src/region.ts'
 import { answeredRouteProjectionDefinition } from '@deepseek-ai/dsh-compaction-basic/src/answered-route.ts'
-import { frameSummary } from '@deepseek-ai/dsh-compaction-basic/src/summarizer.ts'
+import { COMPACTION_INSTRUCTION, frameSummary } from '@deepseek-ai/dsh-compaction-basic/src/summarizer.ts'
 import type { SummarizationInput, SummaryResult } from '@deepseek-ai/dsh-compaction-basic/src/summarizer.ts'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import type { CompactionId } from '@deepseek-ai/dsh-compaction/types'
@@ -23,6 +23,7 @@ import type {
   GenerateOptions,
   LlmFailure,
   LlmCallConfig,
+  LlmProviderInfo,
   LlmResolvedModelInfo,
   Message,
   StreamChunk,
@@ -45,8 +46,12 @@ const SIGNAL = new AbortController().signal
 const MODEL = 'test-model'
 
 class ContextAdapter extends LlmAdapter {
-  constructor(private readonly contextWindow: number) {
+  constructor(private readonly contextWindow: number, private readonly envelope?: LlmProviderInfo['requestEnvelope']) {
     super()
+  }
+
+  override providerInfo(provider: string) {
+    return { ...super.providerInfo(provider), ...(this.envelope ? { requestEnvelope: this.envelope } : {}) }
   }
 
   override resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
@@ -83,14 +88,14 @@ class RoutedContextAdapter extends LlmAdapter {
   }
 }
 
-function createContext(contextWindow = 1_000): Context {
+function createContext(contextWindow = 1_000, envelope?: LlmProviderInfo['requestEnvelope']): Context {
   const ctx = new Context()
   void new LlmRuntime(ctx)
   // The registry is a required injection of TokenMeter (its three
   // projection units register in the constructor); mount it synchronously.
   new SessionProjectionRegistry(ctx)
   void new TokenMeter(ctx)
-  ctx.llm.registerAdapter([MODEL, 'actual', 'unlisted-provider'], new ContextAdapter(contextWindow))
+  ctx.llm.registerAdapter([MODEL, 'actual', 'unlisted-provider'], new ContextAdapter(contextWindow, envelope))
   return ctx
 }
 
@@ -312,6 +317,27 @@ async function compactIfNeeded(
 }
 
 describe('compact configuration and defaults', () => {
+  it('reduces 65 low-token turns and keeps the summary inside the configured message envelope', async () => {
+    const session = conversation(65, 'ok', 'Keep the deadlines.')
+    const compact = service({ auto: false }, createContext(1_000_000, { maxMessages: 128, maxBytes: 1024 * 1024 }))
+    expect(session.surface.nodes.length).toBeGreaterThan(128)
+    const result = await compactIfNeeded(compact, session)
+    expect(result).not.toBeNull()
+    expect(compact.calls).toHaveLength(1)
+    expect(compact.calls[0]!.input.messages.length + 1).toBeLessThanOrEqual(96)
+    expect(session.surface.nodes.length).toBeLessThan(96)
+    expect(summarizedText(compact.calls[0]!.input)).toContain('Keep the deadlines.')
+  })
+
+  it('bounds the summary prefix when UTF-8 bytes fill before the message limit', async () => {
+    const session = conversation(12, '复核'.repeat(360), 'Existing workspace')
+    const compact = service({ auto: false }, createContext(1_000_000, { maxMessages: 128, maxBytes: 65_536 }))
+    const result = await compactIfNeeded(compact, session)
+    expect(result).not.toBeNull()
+    for (const call of compact.calls) {
+      expect(Buffer.byteLength(JSON.stringify(call.input)) + Buffer.byteLength(COMPACTION_INSTRUCTION)).toBeLessThan(32_768)
+    }
+  })
   it('uses low-friction service-wide defaults', () => {
     const resolved = resolveConfig({})
 
@@ -1544,6 +1570,15 @@ describe('default one-shot summarizer', () => {
     expect(policyAdapter.lastOptions?.messages.slice(0, -1)).toEqual([system, prefix])
   })
 
+  it('summarizes an imported answer with the current routed model when its historical provider is unavailable', async () => {
+    const { adapter, compact } = await summarizerHarness([{ type: 'text', text: 'summary' }], undefined, 'routed')
+    const session = conversation(1)
+    session.append('request/header', { header: { config: { provider: 'routed', model: 'selected' } }, reason: 'change' })
+    const output = await compact.runSummarize(promptInput('Imported handoff'), agent(session, 'unused'))
+    expect(output.provider).toBe('routed')
+    expect(adapter.lastOptions?.model).toBe('selected')
+  })
+
   it('resolves the latest routed provider/model before the AgentOptions pair', async () => {
     const { adapter, compact } = await summarizerHarness([{ type: 'text', text: 'summary' }], undefined, 'routed')
     const session = Session.create(brandString<SessionId>('unanswered-route'))
@@ -1816,6 +1851,21 @@ describe('model-switch pressure', () => {
     expect(session.requestHeader()).toEqual(previous)
     expect(session.snapshotEvents().filter(event => event.type === 'compaction/summary'))
       .toHaveLength(1)
+  })
+
+  it('passes a floor-only destination its request even when the estimate exceeds the guaranteed capacity', async () => {
+    const { ctx } = harness()
+    const destination = new RoutedContextAdapter({})
+    vi.spyOn(destination, 'resolveModel').mockImplementation(async (provider, id) => ({
+      provider, id, name: id, requestCapacityFloorTokens: 32000,
+    }))
+    ctx.llm.registerAdapter(['floor-only'], destination)
+    const session = conversation(2)
+    const selected = { provider: 'floor-only', model: 'cloud' }
+    await expect(request(ctx, session, selected)).resolves.toEqual(selected)
+    await expect(request(ctx, session, { ...selected, maxTokens: 32000 }))
+      .resolves.toEqual({ ...selected, maxTokens: 32000 })
+    expect(session.snapshotEvents().some(event => event.type === 'compaction/summary')).toBe(false)
   })
 
   it('uses the proposed output reservation and the destination retention policy', async () => {

@@ -26,6 +26,7 @@ import type { SettingsDocumentActionInjected } from '../src/client/SettingsDocum
 const SELF = '@deepseek-ai/dsh-client-ui-settings-general'
 const SIDEBAR = '@deepseek-ai/dsh-client-ui-sidebar'
 const it = createClientTest({ roster: webApp })
+const managed = createClientTest({ roster: webApp.without(['@deepseek-ai/dsh-client-ui-settings-models', '@deepseek-ai/dsh-client-ui-settings-account', '@deepseek-ai/dsh-client-ui-account-notifications']) })
 /** The whole roster's first boot pays the cold module transform of every plugin package. */
 const COLD_BOOT_TIMEOUT_MS = 60_000
 /** Dictionary namespace this plugin owns; every seat it fills declares it. */
@@ -208,6 +209,22 @@ describe('ui-settings-general apply', () => {
     // The (ns, locale) seats are free again — the dictionary disposer ran.
     expect(() => { c.ctx.locale.register(NS, 'zh', {})() }).not.toThrow()
     expect(() => { c.ctx.locale.register(NS, 'en', {})() }).not.toThrow()
+  })
+
+  managed('opens the same protected settings window from the managed Models section and General row', async ({ mock, start }) => {
+    const open = vi.fn(async () => {})
+    vi.stubGlobal('dshDesktop', { protocolVersion: 1, nimi: { openSettings: open } })
+    onTestFinished(() => { vi.unstubAllGlobals() })
+    const { c } = await client(mock, start)
+    const models = ownEntries(c, 'settings.section').find(entry => entry.options.id === 'models')!
+    const general = c.ctx.slots.entries('settings.general.item').find(entry => entry.options.id === 'nimi-settings')!
+    for (const entry of [models, general]) {
+      const injected: unknown = entry.inject!()
+      if (typeof injected !== 'object' || injected === null || !('openNimiSettings' in injected)
+        || typeof injected.openNimiSettings !== 'function') throw new Error('Missing Nimi settings action')
+      await injected.openNimiSettings()
+    }
+    expect(open).toHaveBeenCalledTimes(2)
   })
 
   it('removes the Desktop channel row and shell subscription when its plugin unloads', async ({ mock, start }) => {

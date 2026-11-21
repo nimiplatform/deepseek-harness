@@ -78,8 +78,12 @@ export function TurnUsagePanel({ usage, t }: TurnUsagePanelProps) {
                 <dd>{`${cacheHit}%`}</dd>
               </>
             )}
-            <dt>{t('message.turnUsage.input')}</dt>
-            <dd>{formatExactCount(usage.uncachedInputTokens, t)}</dd>
+            <dt>{t(usage.cacheReadTokens === undefined && usage.cacheWriteTokens === undefined ? 'message.turnUsage.aggregateInput' : 'message.turnUsage.input')}</dt>
+            <dd>{formatExactCount(
+              usage.cacheReadTokens === undefined && usage.cacheWriteTokens === undefined
+                ? usage.totalTokens - usage.outputTokens : usage.uncachedInputTokens,
+              t,
+            )}</dd>
             {usage.cacheReadTokens !== undefined && (
               <>
                 <dt>{t('message.turnUsage.cacheRead')}</dt>

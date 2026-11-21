@@ -198,7 +198,14 @@ export function apply(ctx: Context, config: Config): void {
       const line = sseData({ type: 'rebuilt', id, rev })
       for (const res of connections) res.write(line)
     })
+    // An idle Desktop relay otherwise reaches its HTTP body timeout with a healthy Worker.
+    // SSE comments keep the stream active without dispatching another plugin event.
+    const heartbeat = setInterval(() => {
+      for (const res of connections) if (!res.writableNeedDrain) res.write(': keep-alive\n\n')
+    }, 60_000)
+    heartbeat.unref()
     return () => {
+      clearInterval(heartbeat)
       unsubscribeGraph()
       unsubscribe()
       disposeRoute()

@@ -1,6 +1,7 @@
 /** Chromium browser tools from the pinned Playwright MCP server. @module */
 
 import { dirname, join } from 'node:path'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import { BrowserMcpConfig, mountSessionMcp, validateBrowserMcpConfig } from '@deepseek-ai/dsh-experimental-browser-use-runtime/mcp'
@@ -32,6 +33,13 @@ export function apply(ctx: Context, config: Config): void {
   const env = Object.fromEntries(Object.keys(process.env)
     .filter(key => key.toUpperCase().startsWith('PLAYWRIGHT_MCP_'))
     .map(key => [key, '']))
+  if (process.platform === 'darwin' && config.mode === 'launch') {
+    // The protected Electron profile can put TMPDIR beyond the UNIX socket limit.
+    // Playwright's socket option applies only to this isolated browser provider.
+    const sockets = mkdtempSync('/tmp/dsh-pw-')
+    env.PWTEST_SOCKETS_DIR = sockets
+    ctx.effect(() => () => rmSync(sockets, { recursive: true, force: true }), 'playwright-mcp sockets')
+  }
   const args = [cli, '--browser', 'chromium']
   if (config.mode === 'attach') {
     args.push('--cdp-endpoint', config.endpoint)

@@ -44,6 +44,9 @@ import type { ModelLabelOwner, ModelMenuControls, ModelMenuPaneRef, ModelSelectI
 import css from './ModelSelect.module.css'
 import { TextSearchIndex } from '@deepseek-ai/dsh-util-text-search'
 import { orderModelProviders } from './provider-order.ts'
+import { normalizeNimiSelection } from './directory.ts'
+
+type NimiRouteFilter = 'all' | 'cloud' | 'local' | 'saved'
 
 /** Which pane the dropdown shows: the root menu, one drilled-in list, or a plugin-owned detail pane. */
 type Pane =
@@ -84,6 +87,7 @@ export function ModelSelect(
   const [open, setOpen] = useState(false)
   const [pane, setPane] = useState<Pane>(ROOT_PANE)
   const [query, setQuery] = useState('')
+  const [routeFilter, setRouteFilter] = useState<NimiRouteFilter>('all')
   const [highlightedIndex, setHighlightedIndex] = useState<number | null>(null)
   const [selectionFocus, setSelectionFocus] = useState(false)
   // The in-menu error strip serves catalog loads (its Retry re-runs the
@@ -105,13 +109,38 @@ export function ModelSelect(
   }
 
   const accountProviderName = t('provider.account')
-  const groups = useMemo(() => orderModelProviders(state.groups).map(group => ({
-    ...group,
-    provider: {
-      id: group.id,
-      name: group.id === 'deepseek-account' ? accountProviderName : group.name,
-    },
-  })), [state.groups, accountProviderName])
+  const hasNimiRoutes = useMemo(
+    () => state.groups.some(group => group.id === 'nimi-local' || group.id.startsWith('nimi-cloud.')),
+    [state.groups],
+  )
+  const normalizedCurrent = useMemo(
+    () => state.current === null ? null : normalizeNimiSelection(state.current, state.groups),
+    [state.current, state.groups],
+  )
+  const groups = useMemo(() => orderModelProviders(state.groups).map((group) => {
+    const providerName = group.id === 'deepseek-account'
+      ? accountProviderName
+      : group.id === 'nimi' && hasNimiRoutes
+        ? t('provider.nimiSaved')
+        : group.id === 'nimi-local'
+          ? t('provider.nimiLocal')
+          : group.id.startsWith('nimi-cloud.')
+            ? t('provider.nimiCloud', { name: group.name })
+            : group.name
+    const models = group.id === 'nimi-local'
+      ? group.models.map(model => model.id === 'local-unconfigured'
+        ? { ...model, name: t('nimi.localUnconfigured') }
+        : model)
+      : group.models
+    return {
+      ...group,
+      models,
+      provider: {
+        id: group.id,
+        name: providerName,
+      },
+    }
+  }), [state.groups, accountProviderName, hasNimiRoutes, t])
   const choices = useMemo(() => groups.flatMap(group =>
     group.models.map(model => ({
       group,
@@ -126,20 +155,32 @@ export function ModelSelect(
     }))), [groups])
   const showSearch = choices.length > 4
   const groupIndexes = useMemo(() => groups.map(group => ({
-    group, index: new TextSearchIndex(group.models, model => ({ fuzzy: [model.name, model.id], substring: [model.description] })),
+    group,
+    index: new TextSearchIndex(group.models, model => ({
+      fuzzy: [model.name, model.id],
+      substring: [model.description, group.provider.name],
+    })),
   })), [groups])
-  const filteredGroups = useMemo(() => groupIndexes.map(({ group, index }) => ({
-    ...group, models: index.search(showSearch ? query : ''),
-  })).filter(group => group.models.length > 0), [groupIndexes, query, showSearch])
+  const filteredGroups = useMemo(() => groupIndexes
+    .filter(({ group }) => {
+      if (!hasNimiRoutes || routeFilter === 'all') return true
+      if (routeFilter === 'cloud') return group.id.startsWith('nimi-cloud.')
+      if (routeFilter === 'local') return group.id === 'nimi-local'
+      return group.id === 'nimi'
+    })
+    .map(({ group, index }) => ({
+      ...group, models: index.search(showSearch ? query : ''),
+    }))
+    .filter(group => group.models.length > 0), [groupIndexes, hasNimiRoutes, routeFilter, query, showSearch])
   const visibleModels = useMemo(() => filteredGroups.flatMap(group => group.models.map(model => ({
     provider: group.id, model: model.id,
   }))), [filteredGroups])
   const currentVisibleIndex = visibleModels.findIndex(model =>
-    model.provider === state.current?.provider && model.model === state.current.model)
+    model.provider === normalizedCurrent?.provider && model.model === normalizedCurrent.model)
   const activeModelIndex = Math.min(highlightedIndex ?? Math.max(0, currentVisibleIndex), visibleModels.length - 1)
-  const selectedIndex = state.current === null
+  const selectedIndex = normalizedCurrent === null
     ? -1
-    : choices.findIndex(c => c.selection.provider === state.current?.provider && c.selection.model === state.current.model)
+    : choices.findIndex(c => c.selection.provider === normalizedCurrent.provider && c.selection.model === normalizedCurrent.model)
   const currentChoice = choices[selectedIndex]
   const reasoning = currentChoice?.model.reasoning
   const effectiveEffort = state.current?.reasoningEffort ?? reasoning?.defaultEffort
@@ -249,6 +290,7 @@ export function ModelSelect(
     setSelectionFocus(false)
     triggerRef.current?.focus()
     setQuery('')
+    setRouteFilter('all')
     setHighlightedIndex(null)
     if (currentChoice === undefined) paneFocus.current = 'drill'
     setPane(currentChoice === undefined ? MODEL_PANE : ROOT_PANE)
@@ -274,6 +316,7 @@ export function ModelSelect(
 
   const drill = (next: DrilledPane): void => {
     setQuery('')
+    setRouteFilter('all')
     setHighlightedIndex(null)
     paneFocus.current = 'drill'
     setPane(next)
@@ -391,9 +434,15 @@ export function ModelSelect(
     close()
   }
 
-  const settleSelection = (result: Awaited<ReturnType<ModelSelectInjected['select']>>): void => {
+  const settleSelection = (
+    selection: ModelSelection,
+    result: Awaited<ReturnType<ModelSelectInjected['select']>>,
+  ): void => {
     if (result === undefined) return
     if (result.ok) {
+      if (selection.provider === 'nimi-local' || selection.provider.startsWith('nimi-cloud.')) {
+        reload()
+      }
       if (rootRef.current !== null) closeAfterSelection()
       return
     }
@@ -412,11 +461,19 @@ export function ModelSelect(
     // Disabled option rows cannot retain focus while a selection is pending.
     setSelectionFocus(true)
     triggerRef.current?.focus()
-    void select(selection).then(settleSelection)
+    void select(selection).then((result) => { settleSelection(selection, result) })
   }
 
   const choose = (selection: ModelSelection): void => {
-    if (state.current?.provider === selection.provider && state.current.model === selection.model) {
+    if (selection.provider === 'nimi-local' && selection.model === 'local-unconfigured') {
+      const nimiBridge = (globalThis as { dshDesktop?: { nimi?: { openHome?: (section?: 'ai-models') => Promise<void> } } }).dshDesktop?.nimi
+      if (nimiBridge?.openHome) {
+        closeAfterSelection()
+        void nimiBridge.openHome('ai-models').catch(() => undefined)
+        return
+      }
+    }
+    if (normalizedCurrent?.provider === selection.provider && normalizedCurrent.model === selection.model) {
       closeAfterSelection()
       return
     }
@@ -424,14 +481,14 @@ export function ModelSelect(
   }
 
   const chooseEffort = (effort: string | undefined): void => {
-    if (state.current === null) return
+    if (normalizedCurrent === null) return
     if (effectiveEffort === effort) {
       closeAfterSelection()
       return
     }
     const selection: ModelSelection = {
-      provider: state.current.provider,
-      model: state.current.model,
+      provider: normalizedCurrent.provider,
+      model: normalizedCurrent.model,
       ...effort === undefined ? {} : { reasoningEffort: effort },
     }
     submit(selection)
@@ -585,6 +642,30 @@ export function ModelSelect(
                   </button>
                 )}
               </div>}
+              {hasNimiRoutes && (
+                <div className={css.filterRow} role="tablist" aria-label={t('menu.model')}>
+                  {([
+                    ['all', t('filter.all')],
+                    ['cloud', t('filter.cloud')],
+                    ['local', t('filter.local')],
+                    ['saved', t('filter.saved')],
+                  ] as const).map(([key, label]) => (
+                    <button
+                      key={key}
+                      type="button"
+                      role="tab"
+                      aria-selected={routeFilter === key}
+                      className={clsx(css.filterTab, routeFilter === key && css.filterTabActive)}
+                      onClick={() => {
+                        setRouteFilter(key)
+                        setHighlightedIndex(0)
+                      }}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
               {state.status === 'loading' && (
                 <div className={css.status}>{t('status.loading')}</div>
               )}
@@ -613,7 +694,7 @@ export function ModelSelect(
                     <MenuGroup key={group.id} label={group.provider.name}>
                       {group.models.map((model) => {
                         const index = modelIndex++
-                        const selected = state.current?.provider === group.id && state.current.model === model.id
+                        const selected = normalizedCurrent?.provider === group.id && normalizedCurrent.model === model.id
                         return (
                           <button
                             ref={itemRef()}

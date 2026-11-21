@@ -236,7 +236,15 @@ export function TerminalBlock({
       data-running={running ? '' : undefined}
       data-body={body ? '' : undefined}
     >
-      <div className={css.header} data-terminal-banner="">
+      <div className={css.header} data-terminal-banner="" onKeyDown={(event) => {
+        if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey
+          || (event.key !== 'Home' && event.key !== 'End')) return
+        const banner = event.currentTarget
+        if ((event.target !== banner && !(event.target instanceof HTMLButtonElement))
+          || banner.scrollHeight <= banner.clientHeight) return
+        event.preventDefault()
+        banner.scrollTop = event.key === 'Home' ? 0 : banner.scrollHeight
+      }}>
         <div className={css.prompt}>
           {showState && <span className={css.runStateLabel} data-terminal-state-label="">{state.label}</span>}
           {commandLines.map((line, index) => (

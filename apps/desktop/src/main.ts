@@ -1,5 +1,17 @@
 /** Electron shell: desktop project ownership, custom protocol, windows, and lifecycle. */
 
+import { createNimiModelCatalog } from './nimi-text.ts'
+import {
+  compileAiConfigOverwriteInput,
+  installNimiActivityOpenHandler,
+  parseNimiHomeChatExport,
+  projectAiConfigSnapshotForUi,
+  projectIntegrationCatalogForUi,
+} from './nimi-ecosystem.ts'
+import { startNimiSessionProvider, type RunningNimiSessionProvider } from './nimi-session-provider.ts'
+import type { NimiElectronAppBusinessServices } from '@nimiplatform/kit/shell/electron/main'
+import { NIMI_LOCAL_APP_STANDARD_SHELL_CAPABILITY_SET_ID } from '@nimiplatform/kit/shell/capabilities'
+import { extractNimiErrorFields } from '@nimiplatform/sdk/types'
 import { installFileActions } from './file-actions.ts'
 import { configurationFailure, channelSaveFailure, configurationMessage } from './update-configuration.ts'
 import type { DesktopChannelState, DesktopChannelChangeResult } from '@deepseek-ai/dsh-client-ui-settings-general/types'
@@ -7,7 +19,11 @@ import { DesktopUpdateSettings } from './update-settings.ts'
 import { isDesktopUpdateChannel } from './settings-file.ts'
 import type { ProductEventMap, ProductEvent } from '@deepseek-ai/dsh-client-product-analytics/types'
 import { WINDOWS_TITLEBAR_HEIGHT } from './windows-layout.ts'
-import { access, readFile, writeFile } from 'node:fs/promises'
+import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
+import { homedir } from 'node:os'
+import { configureNimiElectronAppHostProfile, NIMI_APP_HOST_PROFILE_ENVIRONMENT_KEY } from '@nimiplatform/kit/shell/electron/host-profile'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -23,6 +39,7 @@ import {
   protocol,
   session,
   shell,
+  webContents,
   type IpcMainInvokeEvent,
   type MenuItemConstructorOptions,
 } from 'electron'
@@ -34,7 +51,7 @@ import { installDesktopFileDrag } from './file-drag.ts'
 import { installDesktopDirectoryPicker } from './directory-picker.ts'
 import { installMicrophonePermissions } from './microphone-permissions.ts'
 import { DesktopBackendController } from './backend-controller.ts'
-import { DESKTOP_IPC, SCHEME, assertDesktopSender, type DesktopUpdateState } from './ipc.ts'
+import { DESKTOP_IPC, SCHEME, assertDesktopSender, type DesktopUpdateState, type NimiDesktopHomeChatImportResult, type NimiDesktopHomeSection, type NimiDesktopState } from './ipc.ts'
 import { readDeviceInfo } from './device-info.ts'
 import { desktopUpdateReadyConfirmation, formatDesktopMessage, resolveDesktopLocale, resolveDesktopStartupLocale } from './locale.ts'
 import type { DesktopMessages } from './locale.ts'
@@ -43,7 +60,7 @@ import { desktopUpdateChannel } from './update-channel.ts'
 import { DesktopUpdateCoordinator } from './update-coordinator.ts'
 import { prepareDesktopUpdateWindow } from './update-window.ts'
 import { DesktopCommandManager } from './command-management.ts'
-import { serveWebDocument, forwardWebRequest, removeLegacyHostCookies } from './web-document.ts'
+import { serveWebDocument, serveDevelopmentWebDocument, forwardWebRequest, removeLegacyHostCookies } from './web-document.ts'
 import { DesktopFatalRecovery } from './fatal-recovery.ts'
 import { pruneCrashReports, RendererConsoleTail, writeCrashReport, type CrashReportSource } from './crash-report.ts'
 import { OperationJournal } from './operation-journal.ts'
@@ -71,6 +88,25 @@ import { DesktopUpdateOverlays } from './update-overlay.ts'
 import { DesktopQuitConfirmation } from './quit-confirmation.ts'
 import { DesktopTray } from './tray.ts'
 import { DesktopBackgroundNotice } from './background-notice.ts'
+
+const managedByNimi = Boolean(process.env[NIMI_APP_HOST_PROFILE_ENVIRONMENT_KEY])
+if (app.isPackaged && !managedByNimi) {
+  const metadata = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { nimiManagedDesktop?: boolean }
+  if (metadata.nimiManagedDesktop) throw new Error('Open this Nimi DSH installation from Nimi Home.')
+}
+if (managedByNimi) {
+  configureNimiElectronAppHostProfile(app)
+  app.setName('Nimi DSH')
+}
+const nimiKit = managedByNimi ? await import('@nimiplatform/kit/shell/electron/main') : undefined
+const productRoot = managedByNimi && !app.isPackaged ? fileURLToPath(new URL('../', import.meta.url)) : app.getAppPath()
+const devRendererArgument = process.argv.find(argument => argument.startsWith('--nimi-dev-renderer-url='))
+const devRenderer = managedByNimi && !app.isPackaged && devRendererArgument
+  ? new URL(devRendererArgument.slice('--nimi-dev-renderer-url='.length)) : undefined
+if (devRenderer && (devRenderer.protocol !== 'http:' || devRenderer.hostname !== '127.0.0.1' || !devRenderer.port
+  || devRenderer.pathname !== '/' || devRenderer.username || devRenderer.password || devRenderer.search || devRenderer.hash)) {
+  throw new Error('Expected the loopback renderer from Nimi App Tools.')
+}
 
 let focusPrimaryWindow = (): void => {}
 let stopForRecovery = async (): Promise<void> => { await stopOperationReports() }
@@ -186,7 +222,7 @@ function reportFatal(error: unknown, source: CrashReportSource): void {
   })
 }
 
-protocol.registerSchemesAsPrivileged([{
+protocol.registerSchemesAsPrivileged([...nimiKit ? [nimiKit.NIMI_ELECTRON_APP_ASSET_PROTOCOL_REGISTRATION] : [], {
   scheme: SCHEME,
   privileges: {
     standard: true,
@@ -207,13 +243,15 @@ interface RuntimeResources {
 
 function runtimeResources(): RuntimeResources {
   const development = !app.isPackaged
-  const node = process.execPath
-  const nodeBin = development ? join(app.getAppPath(), 'scripts', 'node-bin') : join(process.resourcesPath, 'runtime', 'bin')
+  // The native DSH loader supports the Electron version pinned by DSH. Home
+  // still owns and admits this main process when their development versions differ.
+  const node = managedByNimi && development ? process.env.DSH_NIMI_DEV_WORKER_EXECUTABLE ?? process.execPath : process.execPath
+  const nodeBin = development ? join(productRoot, 'scripts', 'node-bin') : join(process.resourcesPath, 'runtime', 'bin')
   const pnpm = (development ? process.env.DSH_DESKTOP_PNPM_ENTRY : undefined)
-    ?? (development ? join(app.getAppPath(), 'node_modules', 'pnpm', 'bin', 'pnpm.mjs')
+    ?? (development ? join(productRoot, 'node_modules', 'pnpm', 'bin', 'pnpm.mjs')
       : join(process.resourcesPath, 'runtime', 'primary-runtime', 'dependencies', 'pnpm', 'bin', 'pnpm.mjs'))
   const dsh = (development ? process.env.DSH_DESKTOP_DSH_DIR : undefined)
-    ?? (development ? join(app.getAppPath(), '.desktop-build', 'development', 'project') : join(app.getAppPath(), 'dsh'))
+    ?? (development ? join(productRoot, '.desktop-build', 'development', 'project') : join(productRoot, 'dsh'))
   return { node, nodeBin, pnpm, dsh }
 }
 
@@ -291,6 +329,7 @@ function createWindow(preload: string, show = false, primary = false): BrowserWi
       contextIsolation: true,
       sandbox: true,
       webSecurity: true,
+      ...(managedByNimi ? { additionalArguments: ['--nimi-managed'] } : {}),
       webviewTag: primary,
       devTools: true,
     },
@@ -379,6 +418,229 @@ function createWindow(preload: string, show = false, primary = false): BrowserWi
 }
 
 async function main(): Promise<void> {
+  const nimiSettingsUrl = `${SCHEME}://nimi/`
+  let nimiState: NimiDesktopState = { status: 'connecting', appId: 'ai.nimi.dsh' }
+  let nimiServices: NimiElectronAppBusinessServices | undefined
+  let nimiModelInfo: ReturnType<typeof createNimiModelCatalog> | undefined
+  let nimiScopeAbort: AbortController | undefined
+  let nimiSessionProvider: RunningNimiSessionProvider | undefined
+  let nimiActivityOpenDispose: (() => Promise<void>) | undefined
+  let nimiLifecycleGeneration = 0
+  let nimiLifecycleTail: Promise<void> = Promise.resolve()
+  let nimiReadyGate = Promise.withResolvers<void>()
+  let nimiReadySettled = false
+  let nimiBooted = false
+
+  const resetNimiReadyGate = (): void => {
+    if (!nimiReadySettled) return
+    nimiReadyGate = Promise.withResolvers<void>()
+    nimiReadySettled = false
+  }
+  const resolveNimiReadyGate = (): void => {
+    if (nimiReadySettled) return
+    nimiReadySettled = true
+    nimiReadyGate.resolve()
+  }
+  const classifyNimiSessionError = (error: unknown): NimiDesktopState => {
+    const fields = extractNimiErrorFields(error)
+    const rawCode = fields.reasonCode
+      || (typeof (error as { reasonCode?: unknown } | null)?.reasonCode === 'string'
+        ? (error as { reasonCode: string }).reasonCode
+        : undefined)
+    const errorCode = rawCode || 'runtime-unavailable'
+    const normalized = errorCode.toLowerCase()
+    const signedOut = normalized.includes('unauth')
+      || normalized.includes('revok')
+      || normalized.includes('account-changed')
+      || normalized.includes('session-invalid')
+      || normalized.includes('access-denied')
+      || normalized.includes('sign')
+    const errorMessage = fields.message || (error instanceof Error ? error.message : String(error))
+    return {
+      status: signedOut ? 'signed-out' : 'unavailable',
+      appId: 'ai.nimi.dsh',
+      errorCode,
+      ...(errorMessage ? { errorMessage } : {}),
+    }
+  }
+  const publishNimiState = (next: NimiDesktopState): NimiDesktopState => {
+    nimiState = next
+    if (mainWindow !== undefined && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(DESKTOP_IPC.nimiStateChanged, next)
+    }
+    return next
+  }
+  const enqueueNimiLifecycle = <T>(operation: () => Promise<T>): Promise<T> => {
+    const run = nimiLifecycleTail.then(operation, operation)
+    nimiLifecycleTail = run.then(() => undefined, () => undefined)
+    return run
+  }
+  const resolveNimiAccountHome = async (services: NimiElectronAppBusinessServices): Promise<string> => {
+    const storage = services.storage
+    const key = 'dsh-namespace.json'
+    let namespace: unknown
+    try { ({ value: namespace } = await storage.readJson(key)) }
+    catch (error) {
+      const failure = error as { reasonCode?: string } | null
+      if (failure?.reasonCode !== 'not-found') throw error
+      ;({ value: namespace } = await storage.writeJson(key, randomUUID()))
+    }
+    if (typeof namespace !== 'string' || !/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/u.test(namespace)) {
+      throw new Error('Invalid DSH storage namespace.')
+    }
+    const home = join(homedir(), '.nimi-dsh', namespace)
+    await mkdir(home, { recursive: true, mode: 0o700 })
+    process.env.DSH_HOME = home
+    process.env.DSH_TELEMETRY_DISABLED = '1'
+    hostEnvironment = { ...hostEnvironment, DSH_HOME: home, DSH_TELEMETRY_DISABLED: '1' }
+    return home
+  }
+
+  let onNimiInvalidated = (): void => {}
+  let onNimiReady = (_services: NimiElectronAppBusinessServices): void => {}
+
+  const nimiChrome = nimiKit?.createNimiElectronAppChromeHost({
+    metadata: { name: 'Nimi DSH', version: app.getVersion() },
+    allowedRendererUrls: [nimiSettingsUrl], app,
+    menu: { buildFromTemplate: template => Menu.buildFromTemplate(template as MenuItemConstructorOptions[]),
+      setApplicationMenu: menu => Menu.setApplicationMenu(menu as Electron.Menu | null) },
+  })
+  const nimi = nimiKit?.registerNimiElectronAppBridge({
+    ...(nimiChrome ? { chromeHost: nimiChrome } : {}),
+    appId: 'ai.nimi.dsh', allowedRendererUrls: [`${SCHEME}://app/`, nimiSettingsUrl], ipcMain,
+    assetMediaPlatform: { protocol, webRequest: session.defaultSession.webRequest, webContents },
+    onSessionInvalidated: () => { onNimiInvalidated() },
+    onSessionReady: (services) => { onNimiReady(services) },
+  })
+  let nimiSettingsWindow: BrowserWindow | undefined
+  const openNimiSettings = async (): Promise<void> => {
+    if (!nimiKit || !nimiChrome || quitting) return
+    if (nimiSettingsWindow && !nimiSettingsWindow.isDestroyed()) { nimiSettingsWindow.show(); nimiSettingsWindow.focus(); return }
+    const chromeOptions = nimiKit.createNimiElectronAppChromeWindowOptions()
+    const window = new BrowserWindow({
+      ...(chromeOptions.titleBarStyle ? chromeOptions : {}), width: 920, height: 780, minWidth: 520, minHeight: 600,
+      title: currentDesktopLocale().messages.nimiSettingsMenu,
+      webPreferences: { preload: join(productRoot, 'lib/preload-nimi.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true },
+    })
+    nimiSettingsWindow = window
+    nimiChrome.bindWindow(window)
+    window.webContents.on('dom-ready', () => {
+      window.webContents.send(DESKTOP_IPC.localeChanged, currentDesktopLocale().id)
+    })
+    window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+    window.webContents.on('will-navigate', (event, url) => { if (url !== nimiSettingsUrl) event.preventDefault() })
+    window.once('closed', () => {
+      nimiSettingsWindow = undefined
+      // The user can dismiss settings into another app, without a workspace focus event.
+      if (!quitting) backend.host?.refreshNimiModels()
+    })
+    try { await window.loadURL(nimiSettingsUrl) }
+    catch (error) { window.destroy(); throw error }
+  }
+  const assertNimiSender = (event: IpcMainInvokeEvent): void => {
+    assertDesktopSender(event, ['app'])
+    if (event.senderFrame !== event.sender.mainFrame) throw new Error('Nimi controls require the main document')
+  }
+  const requireNimiServices = (): NimiElectronAppBusinessServices => {
+    if (!nimiServices || nimiState.status !== 'ready') {
+      throw new Error('Nimi session is not ready. Open Nimi Home or recheck access.')
+    }
+    return nimiServices
+  }
+  const openNimiHomeIntent = async (section?: NimiDesktopHomeSection): Promise<void> => {
+    if (!nimiKit) return
+    const intent = section === 'account'
+      ? { kind: 'open-settings' as const, section: 'profile' as const }
+      : section === 'ai-models'
+        ? { kind: 'open-apps' as const, appId: 'ai.nimi.dsh', section: 'ai-models' as const }
+        : section === 'integrations'
+          ? { kind: 'open-integrations' as const }
+          : { kind: 'open-apps' as const, appId: 'ai.nimi.dsh' }
+    const result = await nimiKit.openElectronDesktopIntent({
+      host: { capabilitySetRef: NIMI_LOCAL_APP_STANDARD_SHELL_CAPABILITY_SET_ID },
+      appId: 'ai.nimi.dsh',
+      command: 'nimi.shell.desktopOpen.openIntent',
+      payload: { intent },
+    })
+    if (result.status !== 'accepted') {
+      throw new Error(`Could not open Nimi Home (${result.reasonCode}).`)
+    }
+  }
+  if (nimi) {
+    ipcMain.handle(DESKTOP_IPC.nimiSettings, async (event) => {
+      assertNimiSender(event)
+      await openNimiSettings()
+    })
+    ipcMain.handle(DESKTOP_IPC.nimiStateGet, (event) => {
+      assertNimiSender(event)
+      return nimiState
+    })
+    ipcMain.handle(DESKTOP_IPC.nimiOpenHome, async (event, section: unknown) => {
+      assertNimiSender(event)
+      const validSection = section === undefined || section === 'account' || section === 'apps'
+        || section === 'ai-models' || section === 'integrations'
+        ? section
+        : undefined
+      await openNimiHomeIntent(validSection)
+    })
+    ipcMain.handle(DESKTOP_IPC.nimiAdoptRevision, (event, configRef: unknown) => {
+      assertNimiSender(event)
+      const ref = typeof configRef === 'string' && /^(main|[0-9a-f]{32})$/.test(configRef) ? configRef : undefined
+      backend.host?.adoptNimiRevision(ref)
+      backend.host?.refreshNimiModels()
+    })
+    ipcMain.handle(DESKTOP_IPC.nimiAiConfigGet, async (event, query: unknown) => {
+      assertNimiSender(event)
+      const services = requireNimiServices()
+      const normalized = typeof query === 'object' && query !== null && !Array.isArray(query)
+        ? query as Parameters<NimiElectronAppBusinessServices['aiConfig']['get']>[0]
+        : undefined
+      return projectAiConfigSnapshotForUi(await services.aiConfig.get(normalized))
+    })
+    ipcMain.handle(DESKTOP_IPC.nimiAiConfigListOptions, async (event, query: unknown) => {
+      assertNimiSender(event)
+      const services = requireNimiServices()
+      if (typeof query !== 'object' || query === null || Array.isArray(query)) {
+        throw new Error('Invalid AI config options query.')
+      }
+      return services.aiConfig.listOptions(query as Parameters<NimiElectronAppBusinessServices['aiConfig']['listOptions']>[0])
+    })
+    ipcMain.handle(DESKTOP_IPC.nimiAiConfigOverwrite, async (event, input: unknown) => {
+      assertNimiSender(event)
+      const services = requireNimiServices()
+      if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+        throw new Error('Invalid AI config overwrite payload.')
+      }
+      const compiled = compileAiConfigOverwriteInput(input as Parameters<typeof compileAiConfigOverwriteInput>[0])
+      const result = await services.aiConfig.overwrite(compiled)
+      if (result.outcome === 'committed') {
+        // Refresh catalog labels without silently adopting revisions for already-active sessions;
+        // open sessions must confirm revision drift via AI_CONFIG_REVISION_CONFLICT.
+        backend.host?.refreshNimiModels()
+      }
+      return projectAiConfigSnapshotForUi(result)
+    })
+    ipcMain.handle(DESKTOP_IPC.nimiIntegrationsList, async (event) => {
+      assertNimiSender(event)
+      const services = requireNimiServices()
+      const targets = await services.integration.listCatalog()
+      return projectIntegrationCatalogForUi(targets)
+    })
+    ipcMain.handle(DESKTOP_IPC.nimiImportHomeChat, async (event, sourceJson: unknown): Promise<NimiDesktopHomeChatImportResult> => {
+      assertNimiSender(event)
+      requireNimiServices()
+      if (typeof sourceJson !== 'string') throw new Error('Home chat import expects JSON text.')
+      const parsed = parseNimiHomeChatExport(sourceJson)
+      const host = backend.host
+      if (!host) throw new Error('Desktop workspace host is not ready.')
+      const messages = parsed.messages.filter(message => message.role !== 'system')
+      const result = await host.callNimiWorker<NimiDesktopHomeChatImportResult>('nimi.importHomeChat', { ...parsed, messages })
+      if (mainWindow && !mainWindow.isDestroyed() && result.sessionId) {
+        mainWindow.webContents.send(DESKTOP_IPC.nimiOpenSession, result.sessionId)
+      }
+      return result
+    })
+  }
   const desktopSettings = await readDesktopSettings(app.getPath('userData'))
   void pruneCrashReports(app.getPath('logs'))
   const journalDirectory = process.env.DSH_DESKTOP_UPDATE_JOURNAL_DIR
@@ -402,7 +664,16 @@ async function main(): Promise<void> {
     return result.environment
   })
   let hostEnvironment: NodeJS.ProcessEnv = process.env
-  const prepareHostEnvironment = async (): Promise<void> => { hostEnvironment = await loginShell }
+  const prepareHostEnvironment = async (): Promise<void> => {
+    const resolved = await loginShell
+    hostEnvironment = managedByNimi
+      ? {
+        ...resolved,
+        ...(process.env.DSH_HOME ? { DSH_HOME: process.env.DSH_HOME } : {}),
+        DSH_TELEMETRY_DISABLED: '1',
+      }
+      : resolved
+  }
   let quitting = false
   let startup: Promise<void> | undefined
   let workspaceRecovery: Promise<void> | undefined
@@ -472,7 +743,7 @@ async function main(): Promise<void> {
   // Copy comes from the same locale as the update prompts so the dialog
   // chrome and its content never mix languages.
   const showAbout = async (): Promise<void> => {
-    await ordinaryMessageBox({ type: 'info', title: locale.messages.aboutMenu, message: locale.messages.aboutProduct,
+    await ordinaryMessageBox({ type: 'info', title: locale.messages.aboutMenu, message: managedByNimi ? app.name : locale.messages.aboutProduct,
       detail: formatDesktopMessage(locale.messages.aboutVersion, { version: app.getVersion() }),
       buttons: [locale.messages.updateAcknowledge], cancelId: 0 })
   }
@@ -490,7 +761,6 @@ async function main(): Promise<void> {
   let hostUrl: string | undefined
   let hostCookie: string | undefined
   const browserGuests = new DesktopBrowserGuests(() => hostUrl)
-  let injections: readonly unknown[] = []
   let welcomeBackend: DesktopWelcomeBackend | undefined
   let reportedLaunch = false
   let analyticsEnabled = false
@@ -528,7 +798,7 @@ async function main(): Promise<void> {
     navigation = next
     return next.promise
   }
-  const platformView = new DesktopPlatformView(join(app.getAppPath(), 'lib', 'preload-platform-account.cjs'),
+  const platformView = new DesktopPlatformView(join(productRoot, 'lib', 'preload-platform-account.cjs'),
     () => locale.id === 'zh-CN' ? 'zh_CN' : 'en_US', process.platform === 'win32' ? 'win32' : 'darwin',
     owner => isMandatory() || updateOverlays.input(owner).blocked)
   const backend = new DesktopBackendController((onFailure) => {
@@ -541,8 +811,13 @@ async function main(): Promise<void> {
           segmentBytes: 256 * 1024, recordBytes: 4096, queuedBytes: 64 * 1024,
         })
         operationJournal.enqueue(JSON.stringify(record))
-      })
+      }, nimiServices?.ai, nimiModelInfo, nimiServices)
     return {
+      refreshNimiModels: () => host.refreshNimiModels(),
+      adoptNimiRevision: (configRef?: string) => host.adoptNimiRevision(configRef),
+      callNimiWorker: <T = unknown>(operation: string, payload?: unknown, signal?: AbortSignal, timeoutMs?: number) =>
+        host.callNimiWorker<T>(operation, payload, signal, timeoutMs),
+      bootInjections: () => host.bootInjections(),
       start: async () => {
         const ready = await host.start()
         const cookie = ready.authenticationCookie
@@ -550,9 +825,8 @@ async function main(): Promise<void> {
         hostUrl = ready.url
         void removeLegacyHostCookies(session.defaultSession.cookies, ready.url)
           .catch((error: unknown) => { console.error('desktop: legacy Host cookie cleanup failed', error) })
-        if (ready.injections === undefined) throw new Error('Desktop Host did not provide boot injections')
-        injections = ready.injections
         welcomeBackend = connectDesktopWelcome(ready.url, cookie)
+        if (nimi) return
         analyticsEnabled = await welcomeBackend.analyticsEnabled().catch(() => false)
         if (!reportedLaunch) { reportedLaunch = true; void track('desktop_app_launch', {}) }
         stopAccount?.()
@@ -694,7 +968,7 @@ async function main(): Promise<void> {
     return startup
   }
 
-  const manifest: unknown = JSON.parse(await readFile(join(app.getAppPath(), 'package.json'), 'utf8'))
+  const manifest: unknown = JSON.parse(await readFile(join(productRoot, 'package.json'), 'utf8'))
   const packagedChannel = desktopUpdateChannel(manifest)
   const channelSettings = new DesktopUpdateSettings(app.getPath('userData'), packagedChannel)
   const initialChannel = await channelSettings.load()
@@ -796,12 +1070,14 @@ async function main(): Promise<void> {
 
   protocol.handle(SCHEME, (request) => {
     const url = new URL(request.url)
+    if (nimi && url.hostname === 'nimi') return serveWebDocument(request, join(productRoot, 'lib/nimi'))
     // Shell-owned documents live in the application bundle and never pass through the Host.
-    if (url.hostname === 'shell') return serveWebDocument(request, join(app.getAppPath(),
+    if (url.hostname === 'shell') return serveWebDocument(request, join(productRoot,
       url.pathname === '/design-platform.css' ? 'lib/welcome' : 'renderer'))
     if (url.hostname === 'app') {
       if (url.pathname === '/' || url.pathname === '/index.html' || url.pathname.startsWith('/assets/')
         || ['/favicon.svg', '/manifest.webmanifest'].includes(url.pathname)) {
+        if (devRenderer) return serveDevelopmentWebDocument(request, devRenderer)
         return serveWebDocument(request, join(resources.dsh, 'node_modules', '@deepseek-ai', 'dsh-web-frontend', 'dist'))
       }
       if (backend.host === undefined || hostUrl === undefined || hostCookie === undefined) {
@@ -820,8 +1096,12 @@ async function main(): Promise<void> {
 
   ipcMain.handle(DESKTOP_IPC.boot, async (event) => {
     assertDesktopSender(event, ['app'])
+    if (managedByNimi) await nimiReadyGate.promise
     await startup
-    if (backend.host === undefined || hostUrl === undefined) throw new Error('Desktop Host is unavailable')
+    const host = backend.host
+    if (!host || !hostUrl || quitting) throw new Error('Desktop Host is unavailable')
+    const injections = await host.bootInjections()
+    if (host !== backend.host || !hostUrl || quitting) throw new Error('Desktop Host is unavailable')
     return { injections, streamBaseUrl: new URL(hostUrl).origin }
   })
 
@@ -902,16 +1182,21 @@ async function main(): Promise<void> {
     if (current.id === locale.id) return
     locale = current
     platformView.notifyLocaleChanged()
+    nimiSettingsWindow?.webContents.send(DESKTOP_IPC.localeChanged, current.id)
     windowsLanguage = locale.id
     refreshApplicationMenu()
   })
-  ipcMain.handle(DESKTOP_IPC.updatesChannelGet, (event) => {
+  const assertStandaloneUpdater = (event: IpcMainInvokeEvent): void => {
     assertProductSender(event)
+    if (managedByNimi) throw new Error('Nimi Home manages updates for this installation.')
+  }
+  ipcMain.handle(DESKTOP_IPC.updatesChannelGet, (event) => {
+    assertStandaloneUpdater(event)
     return channelState
   })
   let channelRequests = 0
   ipcMain.handle(DESKTOP_IPC.updatesChannelSet, async (event, channel: unknown): Promise<DesktopChannelChangeResult> => {
-    assertProductSender(event)
+    assertStandaloneUpdater(event)
     if (!isDesktopUpdateChannel(channel)) throw new Error('desktop update: unsupported channel')
     if (channelState === undefined) throw new Error('desktop update: settings are not initialized')
     channelRequests++
@@ -936,7 +1221,7 @@ async function main(): Promise<void> {
     }
   })
   ipcMain.handle(DESKTOP_IPC.updatesStatus, (event) => {
-    assertProductSender(event)
+    assertStandaloneUpdater(event)
     return updatePresentation(updates.state)
   })
   ipcMain.handle(DESKTOP_IPC.deviceInfo, (event) => {
@@ -945,6 +1230,7 @@ async function main(): Promise<void> {
   })
   ipcMain.handle(DESKTOP_IPC.onboardingApiKey, async (event) => {
     assertProductSender(event)
+    if (nimi) return true
     return (await readWelcomeState()).hasApiKey
   })
   ipcMain.on(DESKTOP_IPC.onboardingActive, (event, active: unknown) => {
@@ -959,7 +1245,7 @@ async function main(): Promise<void> {
     }
   })
   ipcMain.handle(DESKTOP_IPC.updatesOpen, async (event) => {
-    assertProductSender(event)
+    assertStandaloneUpdater(event)
     await openUpdatePrompt()
   })
 
@@ -1145,6 +1431,7 @@ async function main(): Promise<void> {
   }
 
   const automaticCheck = (): void => {
+    if (managedByNimi) return
     if (!quitting) void mandatoryPolicy?.check('foreground-or-resume').catch((error: unknown) => { console.error(error) })
     if (!quitting) void updateSchedule.check().catch((error: unknown) => { console.error(error) })
   }
@@ -1155,10 +1442,10 @@ async function main(): Promise<void> {
     updates.dispose()
   })
 
-  const applicationIconPath = development ? join(app.getAppPath(), 'resources', 'icon-windows.png')
+  const applicationIconPath = development ? join(productRoot, 'resources', 'icon-windows.png')
     : join(process.resourcesPath, 'icon.png')
   app.setAboutPanelOptions({
-    applicationName: 'DeepSeek Harness',
+    applicationName: managedByNimi ? 'Nimi DSH' : 'DeepSeek Harness',
     applicationVersion: app.getVersion(),
     // The release has no separate build number; omit Electron's bundle version.
     version: '',
@@ -1201,6 +1488,16 @@ async function main(): Promise<void> {
       { role: 'unhide', label: currentDesktopLocale().messages.showAllApplications }, { type: 'separator' }]
     : []
   const applicationItems = (): MenuItemConstructorOptions[] => [
+    ...(nimi ? [{ label: currentDesktopLocale().messages.nimiSettingsMenu, click: () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        if (mainWindow.isMinimized()) mainWindow.restore()
+        mainWindow.show()
+        mainWindow.focus()
+        mainWindow.webContents.send(DESKTOP_IPC.nimiOpenSettings, 'models')
+        return
+      }
+      void openNimiSettings().catch(error => console.error('Nimi settings could not open', error))
+    } }] : []),
     // Windows has no system About panel; Electron's fallback is a plain
     // message box, so the shell shows its own dimmed dialog instead.
     process.platform === 'win32'
@@ -1208,8 +1505,8 @@ async function main(): Promise<void> {
         click: () => { void showAbout().catch((error: unknown) => { console.error(error) }) } }
       : { label: currentDesktopLocale().messages.aboutMenu, role: 'about' },
     { type: 'separator' },
-    { label: currentDesktopLocale().messages.checkUpdatesMenu, click: () => { void openUpdatePrompt(true) } },
-    ...process.platform === 'darwin' || process.platform === 'win32'
+    ...managedByNimi ? [] : [{ label: currentDesktopLocale().messages.checkUpdatesMenu, click: () => { void openUpdatePrompt(true) } }],
+    ...(!managedByNimi && (process.platform === 'darwin' || process.platform === 'win32'))
       ? [{ label: currentDesktopLocale().messages.cliCommandMenu, click: () => { void commandManager.show() } }] : [],
     { type: 'separator' },
     ...development ? [
@@ -1240,7 +1537,7 @@ async function main(): Promise<void> {
     tray?.relabel()
   }
   refreshApplicationMenu()
-  const trayIconPath = development ? join(app.getAppPath(), 'resources', 'tray-windows.ico') : join(process.resourcesPath, 'tray.ico')
+  const trayIconPath = development ? join(productRoot, 'resources', 'tray-windows.ico') : join(process.resourcesPath, 'tray.ico')
   if (process.platform === 'win32') {
     // The tray is the way back to a hidden window; without it, relaunching the application still focuses it.
     try {
@@ -1321,6 +1618,15 @@ async function main(): Promise<void> {
   }
   const createMainWindow = (): BrowserWindow => {
     const window = createWindow(appPreload, false, true)
+    window.on('focus', () => {
+      refreshApplicationMenu()
+      backend.host?.refreshNimiModels()
+    })
+    if (managedByNimi) {
+      window.webContents.on('did-finish-load', () => {
+        if (!window.isDestroyed()) window.webContents.send(DESKTOP_IPC.nimiStateChanged, nimiState)
+      })
+    }
     mainWindow = window
     browserGuests.bind(window, (guest, name) => shortcuts.attachGuest(window, guest, name))
     shortcuts.attach(window)
@@ -1454,6 +1760,20 @@ async function main(): Promise<void> {
   }
   const openInitialWindow = async (): Promise<void> => {
     if (quitting || recovery.active) return
+    if (nimi) {
+      const prefs = await welcomeBackend?.readPreferences().catch(() => ({
+        localePreference: null,
+        themePreference: 'system' as const,
+      })) ?? { localePreference: null, themePreference: 'system' as const }
+      if (isQuitting() || backend.state.phase !== 'ready') return
+      nativeTheme.themeSource = prefs.themePreference
+      locale = resolveDesktopStartupLocale(prefs.localePreference, systemLanguages)
+      writeDesktopLocaleCache(app.getPath('userData'), locale.id)
+      windowsLanguage = locale.id
+      refreshApplicationMenu()
+      await enterWorkspace()
+      return
+    }
     const state = await readWelcomeState()
     if (isQuitting() || backend.state.phase !== 'ready') return
     nativeTheme.themeSource = state.themePreference
@@ -1461,7 +1781,7 @@ async function main(): Promise<void> {
     writeDesktopLocaleCache(app.getPath('userData'), locale.id)
     windowsLanguage = locale.id
     refreshApplicationMenu()
-    if (!enteredWorkspace && needsWelcome({ loggedIn: state.loggedIn, hasApiKey: state.hasApiKey })) {
+    if (!nimi && !enteredWorkspace && needsWelcome({ loggedIn: state.loggedIn, hasApiKey: state.hasApiKey })) {
       // A later login must retain its own activation policy instead of replaying startup focus.
       raiseAfterUpdate = false
       await showWelcome()
@@ -1479,7 +1799,7 @@ async function main(): Promise<void> {
       return
     }
     // Startup and sign-out select the visible window before activation may reveal the workspace.
-    if (window === mainWindow && !enteredWorkspace) return
+    if (window === mainWindow && !enteredWorkspace && !(managedByNimi && nimiState.status !== 'ready')) return
     if (window.isMinimized()) window.restore()
     window.show()
     window.focus()
@@ -1501,6 +1821,12 @@ async function main(): Promise<void> {
   const finishQuit = (): void => {
     quitting = true
     shuttingDown = true
+    nimiScopeAbort?.abort()
+    nimiScopeAbort = undefined
+    const stopProvider = nimiSessionProvider?.stop(false) ?? Promise.resolve()
+    nimiSessionProvider = undefined
+    const stopActivity = nimiActivityOpenDispose?.() ?? Promise.resolve()
+    nimiActivityOpenDispose = undefined
     updateJournal?.action('quit-requested')
     quitConfirmation.dispose()
     backgroundNotice?.dispose()
@@ -1511,7 +1837,8 @@ async function main(): Promise<void> {
     updateSchedule.dispose()
     updateDialog.dispose()
     mandatoryUI?.dispose()
-    void Promise.all([stopOperationReports(), Promise.resolve(mandatoryPolicy?.dispose()).then(() => policyAuth?.dispose()),
+    void Promise.all([
+      stopProvider, stopActivity, stopOperationReports(), Promise.resolve(mandatoryPolicy?.dispose()).then(() => policyAuth?.dispose()),
       backend.close().then(async () => { await operationJournal?.drain(500) }, async (error: unknown) => {
         await operationJournal?.drain(500)
         throw error
@@ -1545,13 +1872,139 @@ async function main(): Promise<void> {
     }).catch((error: unknown) => { console.error(error); if (!quitting && !shellInstallerOwnsQuit) finishQuit() })
   })
 
+  const callActiveNimiWorker = <T = unknown>(
+    operation: string,
+    payload?: unknown,
+    signal?: AbortSignal,
+    timeoutMs?: number,
+  ): Promise<T> => {
+    const host = backend.host
+    if (!host) return Promise.reject(new Error('Nimi DSH worker is not running.'))
+    return host.callNimiWorker<T>(operation, payload, signal, timeoutMs)
+  }
+
+  const teardownNimiScope = async (invalidated: boolean): Promise<void> => {
+    nimiLifecycleGeneration++
+    nimiScopeAbort?.abort()
+    nimiScopeAbort = undefined
+    const provider = nimiSessionProvider
+    nimiSessionProvider = undefined
+    const activityDispose = nimiActivityOpenDispose
+    nimiActivityOpenDispose = undefined
+    nimiServices = undefined
+    nimiModelInfo = undefined
+    if (nimiSettingsWindow && !nimiSettingsWindow.isDestroyed()) {
+      nimiSettingsWindow.close()
+      nimiSettingsWindow = undefined
+    }
+    resetNimiReadyGate()
+    await Promise.allSettled([
+      provider?.stop(invalidated) ?? Promise.resolve(),
+      activityDispose?.() ?? Promise.resolve(),
+      backend.stop(),
+    ])
+  }
+
+  const activateNimiScope = async (
+    services: NimiElectronAppBusinessServices,
+    reloadWorkspace: boolean,
+  ): Promise<void> => {
+    const generation = ++nimiLifecycleGeneration
+    if (nimiServices !== undefined || nimiSessionProvider !== undefined
+      || nimiActivityOpenDispose !== undefined || backend.host !== undefined) {
+      await teardownNimiScope(false)
+      if (quitting) return
+    }
+    const myGeneration = ++nimiLifecycleGeneration
+    const scopeAbort = new AbortController()
+    nimiScopeAbort = scopeAbort
+    try {
+      await resolveNimiAccountHome(services)
+      if (myGeneration !== nimiLifecycleGeneration || quitting || scopeAbort.signal.aborted) return
+      nimiServices = services
+      nimiModelInfo = createNimiModelCatalog(services.aiConfig)
+      await reconcileBackend()
+      if (myGeneration !== nimiLifecycleGeneration || quitting || scopeAbort.signal.aborted) return
+      nimiSessionProvider = startNimiSessionProvider(
+        services,
+        (operation, payload, signal, timeoutMs) => callActiveNimiWorker(operation, payload, signal, timeoutMs),
+        scopeAbort.signal,
+      )
+      nimiActivityOpenDispose = installNimiActivityOpenHandler(services.activity, {
+        sessionExists: async (sessionId) => {
+          const result = await callActiveNimiWorker<{ exists: boolean }>('remote.session.exists', { sessionId })
+          return result?.exists === true
+        },
+        focusAndOpenSession: (sessionId) => {
+          focusPrimaryWindow()
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send(DESKTOP_IPC.nimiOpenSession, sessionId)
+          }
+        },
+      })
+      publishNimiState({ status: 'ready', appId: 'ai.nimi.dsh' })
+      resolveNimiReadyGate()
+      if (reloadWorkspace && mainWindow && !mainWindow.isDestroyed()) {
+        navigation = undefined
+        await navigateMain(applicationUrl)
+      }
+    } catch (error) {
+      if (myGeneration === nimiLifecycleGeneration && !quitting) {
+        console.warn('Nimi DSH: session activation unavailable', error)
+        publishNimiState(classifyNimiSessionError(error))
+      }
+    }
+    void generation
+  }
+
+  if (nimi) {
+    onNimiInvalidated = () => {
+      if (quitting) return
+      // Synchronously abort the retiring scope and flip UI to the in-window Access Gate.
+      nimiScopeAbort?.abort()
+      publishNimiState({
+        status: 'signed-out',
+        appId: 'ai.nimi.dsh',
+        errorCode: 'session-invalid',
+      })
+      void enqueueNimiLifecycle(async () => {
+        if (quitting) return
+        await teardownNimiScope(true)
+      })
+    }
+    onNimiReady = (services) => {
+      if (quitting || !nimiBooted) return
+      void enqueueNimiLifecycle(async () => {
+        if (quitting || nimiServices === services && nimiState.status === 'ready') return
+        publishNimiState({ status: 'connecting', appId: 'ai.nimi.dsh' })
+        await activateNimiScope(services, enteredWorkspace)
+      })
+    }
+    ipcMain.handle(DESKTOP_IPC.nimiRecheck, async (event): Promise<NimiDesktopState> => {
+      assertNimiSender(event)
+      return enqueueNimiLifecycle(async () => {
+        if (quitting) return nimiState
+        publishNimiState({ status: 'connecting', appId: 'ai.nimi.dsh' })
+        try {
+          await nimi.prepareSession()
+          if (nimiState.status !== 'ready' || nimiServices !== nimi.services || backend.host === undefined) {
+            await activateNimiScope(nimi.services, enteredWorkspace)
+          }
+        } catch (error) {
+          publishNimiState(classifyNimiSessionError(error))
+        }
+        return nimiState
+      })
+    })
+  }
+
   mainWindow = createMainWindow()
   if (typeof manifest !== 'object' || manifest === null) throw new Error('desktop policy: invalid application manifest')
   const developmentPolicy = app.isPackaged ? undefined : process.env.DSH_DESKTOP_MANDATORY_UPDATE_CONFIG
   const policyInput: unknown = app.isPackaged
     ? ('dshMandatoryUpdatePolicy' in manifest ? manifest.dshMandatoryUpdatePolicy : undefined)
     : developmentPolicy === undefined ? undefined : JSON.parse(developmentPolicy) as unknown
-  const policyConfig = resolveDesktopPolicyConfig(policyInput, !app.isPackaged)
+  const policyConfig = managedByNimi ? undefined : resolveDesktopPolicyConfig(policyInput, !app.isPackaged)
   if (policyConfig !== undefined) {
     if (policyConfig.authentication === 'feishu-test') {
       policyAuth = new DesktopPolicyTestAuth(policyConfig.origin, policyConfig.allowedAuthOrigins, locale,
@@ -1591,7 +2044,27 @@ async function main(): Promise<void> {
     }).catch((error: unknown) => { console.error(error) })
   }
   automaticCheck()
-  await reconcileBackend().catch(() => undefined)
+  if (nimi && nimiKit) {
+    nimiBooted = true
+    await enqueueNimiLifecycle(async () => {
+      if (isQuitting()) return
+      try {
+        await nimi.prepareSession()
+        await activateNimiScope(nimi.services, false)
+      } catch (error) {
+        console.warn('Nimi DSH: starting in access-gate posture (session unavailable)', error)
+        publishNimiState(classifyNimiSessionError(error))
+        const window = mainWindow ?? createMainWindow()
+        await navigateMain(applicationUrl)
+        if (!isQuitting() && !window.isDestroyed()) {
+          window.show()
+          window.webContents.send(DESKTOP_IPC.nimiStateChanged, nimiState)
+        }
+      }
+    })
+  } else {
+    await reconcileBackend().catch(() => undefined)
+  }
   // Window lifecycle callbacks run while backend startup is pending.
   if (isQuitting()) return
   const window = currentMainWindow()

@@ -78,6 +78,10 @@ process.on('message', message => {
     process.send({ type: 'quit-inspection', requestId: message.requestId, activeTasks: false, scheduledTasks: message.requestId % 2 === 1 })
     return
   }
+  if (message.type === 'boot-injections') {
+    process.send({ type: 'boot-injections', requestId: message.requestId, injections: [{ revision: message.requestId }] })
+    return
+  }
   if (message.type !== 'shutdown') return
   server.close(() => {
     writeFileSync(join(process.argv[3], 'stopped'), '')
@@ -284,6 +288,16 @@ process.on('message', message => {
 process.send({ type: 'starting', runId: 'c254ab28-97c9-4382-95e6-2db9c66f98c8' })
 `))
     await expect(host.start()).rejects.toThrow('invalid IPC event')
+  })
+
+  it('reads the live Worker injection table for each workspace document', async () => {
+    const host = hostProcess(projectWithHost())
+    await host.start()
+    const first = await host.bootInjections()
+    const second = await host.bootInjections()
+    expect(first).toHaveLength(1)
+    expect(second).toHaveLength(1)
+    expect(second).not.toEqual(first)
   })
 
   it('provides a private per-child authentication Cookie with the ordinary ready address', async () => {

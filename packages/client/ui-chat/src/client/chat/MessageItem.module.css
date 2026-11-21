@@ -346,6 +346,50 @@
   font: var(--dsw-font-markdown-code-block-small);
 }
 
+.turnErrorActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.turnErrorActionBtn {
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 10px;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-elevated, var(--dsw-alias-bg-base));
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .turnErrorActionBtn:hover:not(:disabled) {
+    background: var(--dsw-alias-interactive-bg-hover);
+  }
+}
+
+.turnErrorActionBtn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.turnErrorActionNote {
+  color: var(--dsw-alias-state-success-primary, var(--dsw-alias-label-secondary));
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.turnErrorActionError {
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 12px;
+}
+
 .maxTokensTitle {
   margin-right: 6px;
   color: var(--dsw-alias-state-warn-primary);

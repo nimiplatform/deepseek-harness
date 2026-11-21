@@ -17,6 +17,30 @@ vi.mock('../src/preload-theme.ts', () => ({ syncNativeTheme: vi.fn() }))
 vi.mock('../src/preload-windows.ts', () => ({ syncWindowsAppearance: vi.fn() }))
 vi.mock('../src/preload-mandatory-overlay.ts', () => ({ installMandatoryUpdateOverlay: vi.fn() }))
 
+it('updates the managed settings document when the workspace changes its display language', async () => {
+  vi.doMock('@nimiplatform/kit/shell/electron/preload-cjs', () => ({ installNimiElectronRuntimeBridge: vi.fn() }))
+  const original = document.documentElement.lang
+  const changed = vi.fn()
+  window.addEventListener('languagechange', changed)
+  try {
+    document.documentElement.lang = 'en'
+    await import('../src/preload-nimi.ts')
+    const callback = electron.ipcRenderer.on.mock.calls.find(([channel]) => channel === DESKTOP_IPC.localeChanged)?.[1]
+    expect(callback).toBeTypeOf('function')
+    callback(null, 'zh-CN')
+    callback(null, 'zh-CN')
+    expect(document.documentElement.lang).toBe('zh')
+    expect(changed).toHaveBeenCalledTimes(1)
+    callback(null, 'ja')
+    expect(document.documentElement.lang).toBe('en')
+    expect(changed).toHaveBeenCalledTimes(2)
+  } finally {
+    document.documentElement.lang = original
+    window.removeEventListener('languagechange', changed)
+    vi.doUnmock('@nimiplatform/kit/shell/electron/preload-cjs')
+  }
+})
+
 beforeEach(() => { vi.stubGlobal('process', { ...process, isMainFrame: true }) })
 afterEach(() => { document.body.replaceChildren(); vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.clearAllMocks(); vi.resetModules() })
 
@@ -51,18 +75,33 @@ it('routes original-file requests through the trusted application bridge', async
   ])
 })
 
+it('exposes the Nimi settings entry without upstream update controls in the managed App', async () => {
+  vi.stubGlobal('location', new URL('dsh-app://app/'))
+  const argv = process.argv
+  process.argv = [...argv, '--nimi-managed']
+  try {
+    await import('../src/preload-app.ts')
+    const api = electron.contextBridge.exposeInMainWorld.mock.calls.find(([name]) => name === 'dshDesktop')?.[1] as DshDesktopProductApi
+    expect(api.updates).toBeUndefined()
+    await api.nimi!.openSettings()
+    expect(electron.ipcRenderer.invoke).toHaveBeenCalledWith(DESKTOP_IPC.nimiSettings)
+  } finally {
+    process.argv = argv
+  }
+})
+
 it('limits product documents to update status and a native confirmation action', async () => {
   vi.stubGlobal('location', new URL('dsh-app://app/index.html'))
   await import('../src/preload-app.ts')
   const api = electron.contextBridge.exposeInMainWorld.mock.calls.find(([name]) => name === 'dshDesktop')?.[1] as DshDesktopProductApi
-  await api.updates.status()
-  await api.updates.open()
+  await api.updates!.status()
+  await api.updates!.open()
   expect(electron.ipcRenderer.invoke.mock.calls).toEqual([[DESKTOP_IPC.updatesStatus], [DESKTOP_IPC.updatesOpen]])
   expect(api).not.toHaveProperty('plugins')
   expect(api).not.toHaveProperty('backend')
   expect(api.updates).not.toHaveProperty('install')
   const listener = vi.fn()
-  const dispose = api.updates.subscribe(listener)
+  const dispose = api.updates!.subscribe(listener)
   const handler = electron.ipcRenderer.on.mock.calls.find(([channel]) => channel === DESKTOP_IPC.updatesPresentation)?.[1] as
     (event: unknown, state: unknown) => void
   handler({}, { visible: false })
@@ -298,11 +337,11 @@ it('exposes channel choices and scoped subscriptions without exposing updater ob
   vi.stubGlobal('location', new URL('dsh-app://app/index.html'))
   await import('../src/preload-app.ts')
   const api = electron.contextBridge.exposeInMainWorld.mock.calls.find(([name]) => name === 'dshDesktop')?.[1] as DshDesktopProductApi
-  await api.updates.channels.get()
-  await api.updates.channels.set('stable')
+  await api.updates!.channels.get()
+  await api.updates!.channels.set('stable')
   expect(electron.ipcRenderer.invoke.mock.calls).toEqual([[DESKTOP_IPC.updatesChannelGet], [DESKTOP_IPC.updatesChannelSet, 'stable']])
   const listener = vi.fn()
-  const dispose = api.updates.channels.subscribe(listener)
+  const dispose = api.updates!.channels.subscribe(listener)
   const handler = electron.ipcRenderer.on.mock.calls.find(([channel]) => channel === DESKTOP_IPC.updatesChannelChanged)?.[1] as
     (event: unknown, state: unknown) => void
   const state = { channel: 'stable', packagedChannel: 'nightly', changing: false }
@@ -310,4 +349,44 @@ it('exposes channel choices and scoped subscriptions without exposing updater ob
   expect(listener).toHaveBeenCalledWith(state)
   dispose()
   expect(electron.ipcRenderer.off).toHaveBeenCalledWith(DESKTOP_IPC.updatesChannelChanged, handler)
+})
+
+it('exposes the full typed Nimi desktop bridge surface when managed by Nimi', async () => {
+  vi.stubGlobal('location', new URL('dsh-app://app/index.html'))
+  const originalArgv = [...process.argv]
+  process.argv.push('--nimi-managed')
+  try {
+    electron.ipcRenderer.invoke.mockImplementation(async (channel: string) => {
+      if (channel === DESKTOP_IPC.nimiStateGet) return { status: 'ready', appId: 'ai.nimi.dsh' }
+      if (channel === DESKTOP_IPC.nimiRecheck) return { status: 'ready', appId: 'ai.nimi.dsh' }
+      if (channel === 'nimi:runtime:invoke') return { ok: true, value: { state: 'ready', currentUser: { state: 'ready', value: { displayName: 'Ada', handle: 'ada' } } } }
+      return undefined
+    })
+    await import('../src/preload-app.ts')
+    const api = electron.contextBridge.exposeInMainWorld.mock.calls.find(([name]) => name === 'dshDesktop')?.[1] as DshDesktopProductApi
+    expect(api.nimi).toBeDefined()
+    const state = await api.nimi!.getState()
+    expect(state).toMatchObject({ status: 'ready', appId: 'ai.nimi.dsh', account: { displayName: 'Ada', handle: 'ada' } })
+    await api.nimi!.openHome('integrations')
+    await api.nimi!.adoptLatestRevision?.('work')
+    await api.nimi!.aiConfig.get({ includeRecords: true })
+    await api.nimi!.aiConfig.listOptions({ kind: 'cloud-connectors', capabilityContract: 'text.generate' })
+    await api.nimi!.integrations.listCatalog()
+    await api.nimi!.importHomeChat('{"format":"nimi.home-chat.v1"}')
+    expect(electron.ipcRenderer.invoke).toHaveBeenCalledWith(DESKTOP_IPC.nimiOpenHome, 'integrations')
+    expect(electron.ipcRenderer.invoke).toHaveBeenCalledWith(DESKTOP_IPC.nimiAdoptRevision, 'work')
+    expect(electron.ipcRenderer.invoke).toHaveBeenCalledWith(DESKTOP_IPC.nimiAiConfigGet, { includeRecords: true })
+    expect(electron.ipcRenderer.invoke).toHaveBeenCalledWith(DESKTOP_IPC.nimiIntegrationsList)
+    expect(electron.ipcRenderer.invoke).toHaveBeenCalledWith(DESKTOP_IPC.nimiImportHomeChat, '{"format":"nimi.home-chat.v1"}')
+
+    const onOpen = vi.fn()
+    const offOpen = api.nimi!.subscribeOpenSession!(onOpen)
+    const openHandler = electron.ipcRenderer.on.mock.calls.find(([channel]) => channel === DESKTOP_IPC.nimiOpenSession)?.[1] as
+      (event: unknown, sessionId: unknown) => void
+    openHandler({}, 'session-42')
+    expect(onOpen).toHaveBeenCalledWith('session-42')
+    offOpen()
+  } finally {
+    process.argv.splice(0, process.argv.length, ...originalArgv)
+  }
 })

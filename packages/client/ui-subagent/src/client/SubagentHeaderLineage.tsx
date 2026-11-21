@@ -82,7 +82,7 @@ function tokenTotal(
 ): number | undefined {
   return usage === undefined
     ? undefined
-    : usage.uncachedInputTokens + usage.outputTokens
+    : (usage.unclassifiedInputTokens ?? 0) + usage.uncachedInputTokens + usage.outputTokens
       + usage.cacheReadTokens + usage.cacheWriteTokens
 }
 

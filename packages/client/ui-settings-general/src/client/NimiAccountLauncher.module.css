@@ -1,0 +1,104 @@
+.root {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex: 1;
+}
+
+.anchor {
+  display: flex;
+  min-width: 0;
+  width: 100%;
+}
+
+.trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  cursor: pointer;
+  text-align: left;
+  transition: background-color 120ms ease;
+}
+
+.trigger:hover {
+  background: var(--dsw-alias-interactive-bg-hover, rgba(127, 127, 127, 0.12));
+}
+
+.trigger[data-collapsed='true'] {
+  width: 36px;
+  justify-content: center;
+  padding: 0;
+}
+
+.badge {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-layer2, rgba(127, 127, 127, 0.16));
+  color: var(--dsw-alias-label-primary);
+  font-size: 11px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.dot {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  border: 1.5px solid var(--dsw-alias-bg-layer1, #ffffff);
+  background: var(--dsw-alias-label-tertiary, #9ca3af);
+}
+
+.dot[data-status='ready'] {
+  background: var(--dsw-alias-state-success-primary, #16a34a);
+}
+
+.dot[data-status='connecting'] {
+  background: var(--dsw-alias-state-warning-primary, #d97706);
+}
+
+.dot[data-status='signed-out'],
+.dot[data-status='unavailable'] {
+  background: var(--dsw-alias-state-error-primary, #dc2626);
+}
+
+.meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.name {
+  font-size: 13px;
+  line-height: 16px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.status {
+  font-size: 11px;
+  line-height: 14px;
+  color: var(--dsw-alias-label-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

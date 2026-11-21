@@ -19,7 +19,8 @@ const zeroBuckets = (): TokenUsageProjection => ({
 })
 
 const bucketsFrom = (usage: TokenUsage): TokenUsageProjection => ({
-  uncachedInputTokens: usage.inputTokens,
+  ...(usage.cacheReadTokens === undefined && usage.cacheWriteTokens === undefined && usage.inputTokens > 0
+    ? { unclassifiedInputTokens: usage.inputTokens, uncachedInputTokens: 0 } : { uncachedInputTokens: usage.inputTokens }),
   outputTokens: usage.outputTokens,
   cacheReadTokens: usage.cacheReadTokens ?? 0,
   cacheWriteTokens: usage.cacheWriteTokens ?? 0,
@@ -27,6 +28,7 @@ const bucketsFrom = (usage: TokenUsage): TokenUsageProjection => ({
 
 const bucketsEqual = (left: TokenUsageProjection, right: TokenUsageProjection): boolean =>
   left.uncachedInputTokens === right.uncachedInputTokens
+  && left.unclassifiedInputTokens === right.unclassifiedInputTokens
   && left.outputTokens === right.outputTokens
   && left.cacheReadTokens === right.cacheReadTokens
   && left.cacheWriteTokens === right.cacheWriteTokens
@@ -35,14 +37,20 @@ const addReplacing = (
   totals: TokenUsageProjection,
   previous: TokenUsageProjection | undefined,
   next: TokenUsageProjection,
-): TokenUsageProjection => ({
-  uncachedInputTokens: totals.uncachedInputTokens - (previous?.uncachedInputTokens ?? 0) + next.uncachedInputTokens,
-  outputTokens: totals.outputTokens - (previous?.outputTokens ?? 0) + next.outputTokens,
-  cacheReadTokens: totals.cacheReadTokens - (previous?.cacheReadTokens ?? 0) + next.cacheReadTokens,
-  cacheWriteTokens: totals.cacheWriteTokens - (previous?.cacheWriteTokens ?? 0) + next.cacheWriteTokens,
-})
+): TokenUsageProjection => {
+  const unclassified = (totals.unclassifiedInputTokens ?? 0)
+    - (previous?.unclassifiedInputTokens ?? 0) + (next.unclassifiedInputTokens ?? 0)
+  return {
+    ...(unclassified > 0 ? { unclassifiedInputTokens: unclassified } : {}),
+    uncachedInputTokens: totals.uncachedInputTokens - (previous?.uncachedInputTokens ?? 0) + next.uncachedInputTokens,
+    outputTokens: totals.outputTokens - (previous?.outputTokens ?? 0) + next.outputTokens,
+    cacheReadTokens: totals.cacheReadTokens - (previous?.cacheReadTokens ?? 0) + next.cacheReadTokens,
+    cacheWriteTokens: totals.cacheWriteTokens - (previous?.cacheWriteTokens ?? 0) + next.cacheWriteTokens,
+  }
+}
 
 const projectionSchema = z.object({
+  unclassifiedInputTokens: z.number().int().positive().optional(),
   uncachedInputTokens: z.number().int().nonnegative(),
   outputTokens: z.number().int().nonnegative(),
   cacheReadTokens: z.number().int().nonnegative(),
@@ -110,7 +118,7 @@ export type ContextPressureState = z.infer<typeof contextPressureStateSchema>
  */
 export const tokenUsageProjectionDefinition = {
   key: 'tokenUsage',
-  stateVersion: 2,
+  stateVersion: 3,
   stateSchema: tokenUsageStateSchema,
   init: () => ({ totals: zeroBuckets(), last: null }),
   apply: (state, event) => {

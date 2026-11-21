@@ -91,6 +91,29 @@ describe('SubagentModelSelectionCardController', () => {
     ])
   })
 
+  it('excludes uncommitted virtual Nimi route groups while preserving saved Nimi configs and removable stored entries', () => {
+    const candidates = subagentModelCandidates(
+      [
+        { id: 'nimi', name: 'Nimi', models: [{ id: 'config.main', name: 'Default' }] },
+        { id: 'nimi-local', name: 'Nimi Local', models: [{ id: 'local', name: 'Local model' }] },
+        { id: 'nimi-cloud.conn_1', name: 'OpenAI', models: [{ id: 'gpt-5', name: 'gpt-5' }] },
+      ],
+      [{ provider: 'nimi-cloud.conn_1', model: 'gpt-5' }],
+      new Set(['nimi-cloud.conn_1\0gpt-5']),
+    )
+
+    expect(candidates).toEqual([
+      {
+        key: 'nimi\0config.main', provider: 'nimi', model: 'config.main', providerName: 'Nimi',
+        modelName: 'Default', available: true, selected: false,
+      },
+      {
+        key: 'nimi-cloud.conn_1\0gpt-5', provider: 'nimi-cloud.conn_1', model: 'gpt-5',
+        providerName: 'nimi-cloud.conn_1', modelName: 'gpt-5', available: false, selected: true,
+      },
+    ])
+  })
+
   it('loads adapter models and saves the switch and routes atomically', async () => {
     const host = stubConfigForm<SubagentModelSelectionSettings>()
     acceptWrites(host)

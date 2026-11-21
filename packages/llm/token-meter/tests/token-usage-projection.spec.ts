@@ -140,6 +140,15 @@ describe('tokenUsage session projection', () => {
     expect(changes).toHaveLength(1)
   })
 
+  it('replaces an aggregate-only sample when its final cache breakdown arrives', async () => {
+    const { ctx, session } = await harness()
+    startStep(session, 1, 1)
+    usageChunk(session, { inputTokens: 10, outputTokens: 2 }, 1, 1)
+    expect(projected(ctx, session).unclassifiedInputTokens).toBe(10)
+    finalUsage(session, { inputTokens: 8, outputTokens: 2, cacheReadTokens: 2 }, 1, 1)
+    expect(projected(ctx, session)).toEqual({ uncachedInputTokens: 8, outputTokens: 2, cacheReadTokens: 2, cacheWriteTokens: 0 })
+  })
+
   it('replaces an earlier same-step chunk sample with the final usage', async () => {
     const { ctx, session } = await harness()
     startStep(session, 1, 1)
@@ -262,7 +271,8 @@ describe('tokenUsage session projection', () => {
     usageChunk(session, { inputTokens: 9, outputTokens: 1 }, 1, 1)
     session.append('step/end', { turn: 1, step: 1 })
     expect(projected(ctx, session)).toEqual({
-      uncachedInputTokens: 9,
+      uncachedInputTokens: 0,
+      unclassifiedInputTokens: 9,
       outputTokens: 1,
       cacheReadTokens: 0,
       cacheWriteTokens: 0,
@@ -288,7 +298,8 @@ describe('tokenUsage session projection', () => {
     })
 
     expect(projected(ctx, session)).toEqual({
-      uncachedInputTokens: 12,
+      uncachedInputTokens: 0,
+      unclassifiedInputTokens: 12,
       outputTokens: 3,
       cacheReadTokens: 0,
       cacheWriteTokens: 0,

@@ -35,6 +35,7 @@ const CONNECTING_MIN_VISIBLE_MS = 800
 function navIcon(id: string) {
   if (id === 'account') return <IconUserOutlineMedium size={16} />
   if (id === 'models') return <IconDataOutlineMedium size={16} />
+  if (id === 'integrations') return <IconPersonalizationOutlineMedium size={16} />
   if (id === 'agent-presets') return <IconAgentPresetOutlineMedium size={16} />
   if (id === 'plugins') return <IconPersonalizationOutlineMedium size={16} />
   if (id === 'archived-sessions') return <IconArchiveOutlineMedium size={16} />

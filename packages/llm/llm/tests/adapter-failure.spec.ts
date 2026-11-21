@@ -1,7 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import { normalizeLlmFailure } from '../src/adapter-failure.ts'
+import { LlmError } from '../src/index.ts'
 
 describe('adapter failure normalization', () => {
+  it('preserves structured adapter diagnostics through rethrow and JSON persistence', () => {
+    const diagnostics = {
+      reasonCode: 'AI_EXECUTION_INTERRUPTED', actionHint: 'review_outcome', traceId: 'trace-1',
+      interruptionCause: 'runtime-restart', resubmitDisposition: 'outcome-uncertain',
+    }
+    const error = LlmError.fromFailure({ message: 'Interrupted.', code: 'AI_EXECUTION_INTERRUPTED', diagnostics })
+    expect(normalizeLlmFailure(error)).toEqual(JSON.parse(JSON.stringify(error.failure)))
+    expect(error.failure.diagnostics).toEqual(diagnostics)
+    expect(error.failure.diagnostics).not.toBe(diagnostics)
+  })
   it('contains hostile non-Error coercion', () => {
     const thrown = { [Symbol.toPrimitive]: () => { throw new Error('coercion failed') } }
     expect(normalizeLlmFailure(thrown)).toEqual({ message: 'LLM adapter failed', code: 'UNKNOWN' })

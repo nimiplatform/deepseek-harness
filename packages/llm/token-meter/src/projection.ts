@@ -13,6 +13,8 @@ import type { SessionProjectionSummaryExcluded } from '@deepseek-ai/dsh-session-
  * included in `outputTokens` and are not accumulated again.
  */
 export interface TokenUsageProjection {
+  /** Aggregate input from calls which did not report a cache breakdown. */
+  unclassifiedInputTokens?: number | undefined
   uncachedInputTokens: number
   outputTokens: number
   cacheReadTokens: number

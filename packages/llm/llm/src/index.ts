@@ -80,6 +80,7 @@ declare module '@deepseek-ai/cordis' {
 
 /** Structured provider facts and cause accepted by {@link LlmError}. */
 export interface LlmErrorOptions extends ErrorOptions {
+  diagnostics?: Readonly<Record<string, string>>
   /** Valid HTTP status observed at the provider boundary. */
   status?: number
   /** Positive finite provider-requested delay in milliseconds. */
@@ -126,6 +127,7 @@ export class LlmError extends HarnessError {
     this.failure = Object.freeze({
       message,
       code,
+      ...options?.diagnostics === undefined ? {} : { diagnostics: { ...options.diagnostics } },
       ...options?.status === undefined ? {} : { status: options.status },
       ...options?.providerRetryAfterMs === undefined ? {} : { providerRetryAfterMs: options.providerRetryAfterMs },
       ...options?.requestId === undefined ? {} : { requestId: options.requestId },
@@ -291,6 +293,24 @@ export abstract class LlmAdapter {
     _signal?: AbortSignal,
   ): Promise<LlmResolvedModelInfo> {
     return Promise.resolve({ provider, id: model, name: model })
+  }
+
+  /**
+   * Materialize or normalize a GUI/command model selection before validation
+   * and durable session persistence. Adapters that expose virtual route entries
+   * (such as Nimi Cloud/Local direct selection backed by canonical AppAIConfig
+   * records) override this to return the durable provider/model identity.
+   * @param provider - registered provider route selected by the caller.
+   * @param model - catalog model id selected by the caller.
+   * @param _signal - optional cancellation signal.
+   * @returns the normalized provider/model identity to validate and persist.
+   */
+  commitModelSelection(
+    provider: string,
+    model: string,
+    _signal?: AbortSignal,
+  ): Promise<{ readonly provider: string; readonly model: string }> {
+    return Promise.resolve({ provider, model })
   }
 
   /**
@@ -461,12 +481,17 @@ export class LlmRuntime extends TypertRemoteService {
       if (typeof info.id !== 'string' || info.id !== provider || typeof info.name !== 'string' || info.name.length === 0) {
         throw new LlmError(`adapter metadata for provider "${provider}" must preserve its id and have a non-empty name`, 'INVALID_ADAPTER')
       }
+      const limits = info.requestEnvelope
+      if (limits !== undefined && (!Number.isSafeInteger(limits.maxMessages) || limits.maxMessages < 1
+        || !Number.isSafeInteger(limits.maxBytes) || limits.maxBytes < 1)) {
+        throw new LlmError('adapter request envelope limits must be positive integers', 'INVALID_ADAPTER')
+      }
       unique.add(provider)
       const retryPolicy = adapter.providerRetryPolicy(provider)
         ?? resolveRetryPolicy(undefined, `llm: provider "${provider}" retryPolicy`)
       registrations.push({
         adapter,
-        provider: { id: info.id, name: info.name },
+        provider: { id: info.id, name: info.name, ...(limits ? { requestEnvelope: Object.freeze({ ...limits }) } : {}) },
         retryPolicy,
       })
     }
@@ -810,6 +835,10 @@ export class LlmRuntime extends TypertRemoteService {
         'INVALID_MODEL_INFO',
       )
     }
+    const floor = resolved.requestCapacityFloorTokens
+    if (floor !== undefined && (!Number.isSafeInteger(floor) || floor < 1)) {
+      throw new LlmError('The adapter returned an invalid request capacity floor.', 'INVALID_MODEL_CONTEXT')
+    }
     const context = resolved.context
     if (context !== undefined && (!Number.isInteger(context.contextWindow) || context.contextWindow <= 0)) {
       throw new LlmError(
@@ -850,6 +879,7 @@ export class LlmRuntime extends TypertRemoteService {
       name: resolved.name,
       ...resolved.description === undefined ? {} : { description: resolved.description },
       ...inputModalities === undefined ? {} : { inputModalities },
+      ...(floor === undefined ? {} : { requestCapacityFloorTokens: floor }),
       ...context === undefined ? {} : { context: { contextWindow: context.contextWindow } },
       ...defaultMaxTokens === undefined ? {} : { defaultMaxTokens },
       ...resolved.systemPromptUpdate === undefined ? {} : { systemPromptUpdate: resolved.systemPromptUpdate },
@@ -898,6 +928,22 @@ export class LlmRuntime extends TypertRemoteService {
         ...reasoning.defaultEffort === undefined ? {} : { defaultEffort: reasoning.defaultEffort },
       },
     }
+  }
+
+  /**
+   * Materialize or normalize a caller's catalog selection through the owning adapter
+   * before capability validation and durable Session persistence.
+   * @param provider - registered provider route selected by the caller.
+   * @param model - catalog model id selected by the caller.
+   * @param signal - optional cancellation signal.
+   * @returns the durable provider/model identity returned by the adapter.
+   */
+  async commitModelSelection(
+    provider: string,
+    model: string,
+    signal?: AbortSignal,
+  ): Promise<{ readonly provider: string; readonly model: string }> {
+    return this.registration(provider).adapter.commitModelSelection(provider, model, signal)
   }
 
   /**

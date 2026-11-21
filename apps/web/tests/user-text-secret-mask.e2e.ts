@@ -44,6 +44,37 @@ describe('web e2e: credential mask in user text', () => {
     await scaffold?.close()
   })
 
+  it('keeps a wrapped password with wide and combining characters in the same space', async () => {
+    const value = 'ab窗边🌿e\u0301'.repeat(18)
+    const prompt = `Layout sample postgres://demo:${value}@example.invalid/receipt.`
+    const id = 'user-text-wide-marks'
+    const seed = (await readFile(SEED, 'utf8')).replace(RECORDED_PROMPT, prompt)
+    await seedSession(scaffold, seed, id)
+    const wide = await newEnglishPage(browser)
+    try {
+      await wide.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
+      await wide.getByText('Ungrouped', { exact: true }).waitFor()
+      await wide.getByRole('button', { name: 'Search sessions' }).click()
+      await wide.getByRole('textbox', { name: 'Search session names' }).fill(id)
+      await wide.getByRole('tree', { name: 'Search results' }).getByRole('treeitem').click()
+      const run = wide.locator('[data-secret]')
+      const bubble = wide.locator('[class*="bubble"]', { has: run })
+      await run.waitFor()
+      const geometry = async () => [await run.boundingBox(), await bubble.boundingBox(), await run.getByRole('button').boundingBox()]
+      const initial = await geometry()
+      expect(initial[0]!.height).toBeGreaterThan(initial[2]!.height * 2)
+      expect(await bubble.textContent()).not.toContain(value)
+      await run.getByRole('button', { name: 'Show secret' }).click()
+      await expect.poll(() => bubble.textContent()).toBe(prompt)
+      expect(await geometry()).toEqual(initial)
+      await run.getByRole('button', { name: 'Hide secret' }).click()
+      await expect.poll(() => bubble.textContent()).not.toContain(value)
+      expect(await geometry()).toEqual(initial)
+    } finally {
+      await wide.context().close()
+    }
+  })
+
   it('masks the credential in the bubble and reveals it from its own control', async () => {
     onTestFailed(() => saveFailureShot(page, 'web-e2e-user-text-secret-mask'))
     const text = page.locator('[class*="bubble"]', { has: page.locator('[data-secret]') })

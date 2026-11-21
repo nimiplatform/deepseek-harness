@@ -9,6 +9,21 @@ const MIME: Readonly<Record<string, string>> = {
 }
 const BOOT = '<script>globalThis.__DSH_BOOT_READY__ = Promise.withResolvers()</script>'
 
+/** Load the same renderer from the supervised static server during development. */
+export async function serveDevelopmentWebDocument(request: Request, origin: URL): Promise<Response> {
+  if (request.method !== 'GET' && request.method !== 'HEAD') return new Response(null, { status: 405 })
+  const url = new URL(request.url)
+  const target = new URL(origin)
+  target.pathname = url.pathname
+  const response = await fetch(target, { method: request.method, signal: request.signal, redirect: 'error' })
+  if (request.method === 'HEAD' || !response.ok || (url.pathname !== '/' && url.pathname !== '/index.html')) {
+    return response
+  }
+  return new Response((await response.text()).replace('<head>', '<head>' + BOOT), {
+    headers: { 'content-type': 'text/html; charset=utf-8' },
+  })
+}
+
 /**
  * Read an application-owned static asset; the index waits for asynchronous Host injections.
  * @param request - Local application request.

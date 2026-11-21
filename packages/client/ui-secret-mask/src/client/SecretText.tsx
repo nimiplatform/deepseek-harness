@@ -11,6 +11,8 @@ const EYE_PATH = `${EYE_CONTOUR}M10 8C10 9.1 9.1 10 8 10C6.9 10 6 9.1 6 8C6 6.9 
 /** The struck-through glyph drops the pupil so it stays distinct at text size. */
 const EYE_OFF_PATH = `${EYE_CONTOUR}M2.5 2.5L13.5 13.5`
 const MASK_RUNS = new RegExp(`(\\${MASK}+)`, 'u')
+const PLAIN = /^[\x20-\x7e]+$/u
+const GRAPHEMES = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
 
 function EyeGlyph({ path }: { readonly path: string }) {
   return (
@@ -21,19 +23,41 @@ function EyeGlyph({ path }: { readonly path: string }) {
 }
 
 /**
- * Split the masked form into kept text and mask runs. Mask runs keep their
- * characters for copying and assistive technology but draw centered marks,
- * because a font's own asterisk sits near the cap height.
+ * Use one run for printable ASCII, including long keys. Variable-width graphemes
+ * get the same cell and wrap point in both states, even for fallback emoji fonts.
  */
-function MaskedText({ masked }: { readonly masked: string }) {
+function HiddenRun({ source, revealed }: { readonly source: string; readonly revealed: boolean }) {
+  const plainRun = (start: number, end: number) => <span key={start} className={revealed ? undefined : css.mask}>
+    {revealed ? source.slice(start, end) : MASK.repeat(end - start)}
+  </span>
+  if (PLAIN.test(source)) return plainRun(0, source.length)
+  const runs = []
+  let start = 0
+  for (const { index, segment } of GRAPHEMES.segment(source)) {
+    if (PLAIN.test(segment)) continue
+    if (start < index) runs.push(plainRun(start, index))
+    const marks = Array.from(segment).length
+    runs.push(<span key={index} className={css.cell} style={{ inlineSize: `max(1em, ${Math.max(2, marks)}ch)` }}>
+      <span className={revealed ? undefined : css.mask}>{revealed ? segment : MASK.repeat(marks)}</span>
+    </span>)
+    start = index + segment.length
+  }
+  if (start < source.length) runs.push(plainRun(start, source.length))
+  return runs
+}
+
+/** Keep the same text-run boundaries so rounding each inline fragment gives the same geometry. */
+function CredentialText({ masked, raw, revealed }: { readonly masked: string; readonly raw: string; readonly revealed: boolean }) {
+  // A non-BMP character occupies two code units in the original and one mark in the mask.
+  const original = raw.length === masked.length ? undefined : Array.from(raw)
   let offset = 0
-  return masked.split(MASK_RUNS).map((part) => {
-    const key = offset
-    offset += part.length
+  return masked.split(MASK_RUNS).map((part, index) => {
     if (part === '') return null
-    return part.startsWith(MASK)
-      ? <span key={key} className={css.mask}>{part}</span>
-      : <span key={key}>{part}</span>
+    const start = offset
+    offset += original === undefined ? part.length : Array.from(part).length
+    if (!part.startsWith(MASK)) return <span key={index}>{part}</span>
+    const source = original === undefined ? raw.slice(start, offset) : original.slice(start, offset).join('')
+    return <HiddenRun key={index} source={source} revealed={revealed} />
   })
 }
 
@@ -51,7 +75,7 @@ export function SecretText({ node, raw, interactive, t }: SecretTextProps) {
   const revealed = interactive && revealedRaw === raw
   return (
     <span className={css.secret} data-secret="">
-      <span className={css.value}>{revealed ? raw : <MaskedText masked={node.data.masked} />}</span>
+      <span className={css.value}><CredentialText masked={node.data.masked} raw={raw} revealed={revealed} /></span>
       {interactive && (
         <button
           type="button"

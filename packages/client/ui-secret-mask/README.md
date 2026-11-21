@@ -27,7 +27,7 @@ Use `dsh-client-ui-secret-mask` when Web users paste API keys, tokens, or passwo
 
 Mount the package beside `dsh-client-ui-conversation`. The Web app bundle mounts it by default; removing its row draws credentials as written. Every caller of the [UserText Factory](../ui-conversation/README.md#sent-user-text) masks: message bubbles, steering messages, pending echoes, queued messages, and `/goal` input bubbles.
 
-Each masked value is drawn in a monospace font, so revealing it does not move the surrounding text. Interactive text, which is a sent message or an admitted steering message, adds an eye control at the end of each run. The control reveals or hides that one value, and every mount starts masked. Other callers draw the masked value without a control.
+Masked and revealed values share the same monospace text runs and wrap points. Wide and combining characters keep their cell when revealed, so nearby text and the eye control stay in place. Interactive text, which is a sent message or an admitted steering message, adds an eye control at the end of each run. The control reveals or hides that one value, and every mount starts masked. Other callers draw the masked value without a control.
 
 <a id="what-is-masked"></a>
 ### What is masked

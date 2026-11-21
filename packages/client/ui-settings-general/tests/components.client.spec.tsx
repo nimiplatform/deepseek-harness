@@ -6,6 +6,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { allowAllAccess, bindSnapshotSelector, RemoteError } from '@deepseek-ai/dsh-client-test-runtime'
 import type { GeneralSectionComponentProps } from '../src/client/GeneralSection.tsx'
 import { GeneralSection } from '../src/client/GeneralSection.tsx'
+import { NimiSettingsRow } from '../src/client/NimiSettingsRow.tsx'
 import { CloseLabel, HeaderContent, TriggerContent } from '../src/client/chrome.tsx'
 import type { TriggerContentProps } from '../src/client/chrome.tsx'
 import { SettingsDocumentAction } from '../src/client/SettingsDocumentAction.tsx'
@@ -126,6 +127,15 @@ describe('chrome content', () => {
 })
 
 describe('GeneralSection', () => {
+  it('opens the injected Nimi settings window and exposes a failed open', async () => {
+    const openNimiSettings = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('unavailable'))
+    const view = render(<NimiSettingsRow {...kit} t={t} openNimiSettings={openNimiSettings} />)
+    fireEvent.click(view.getByRole('button'))
+    await waitFor(() => { expect(openNimiSettings).toHaveBeenCalledTimes(1) })
+    expect(view.queryByRole('alert')).toBeNull()
+    fireEvent.click(view.getByRole('button'))
+    await waitFor(() => { expect(view.getByRole('alert').textContent).toBe(en['nimi.settingsError']) })
+  })
   function mount() {
     const renderSlot = vi.fn(
       ((key: string) => <div data-testid={`slot-${key}`} />) as GeneralSectionComponentProps['renderSlot'],

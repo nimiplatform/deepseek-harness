@@ -1,0 +1,7 @@
+node_modules/
+dist/
+dist-web/
+dist-electron/
+dist-electron-package/
+.env.local
+.nimi/local/

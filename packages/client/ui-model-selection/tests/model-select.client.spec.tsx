@@ -1136,3 +1136,34 @@ it('dismisses contributed options with focus on the trigger before opening anoth
   })
   expect(screen.queryByRole('menu')).toBeNull()
 })
+
+it('filters Nimi Cloud, Local, and Saved groups and resolves legacy hashed Nimi config IDs', () => {
+  const groups = [
+    { id: 'nimi', name: 'Nimi', models: [{ id: 'config.main', name: 'Default', badge: { text: 'gpt-6-luna · openai', tone: 'neutral' as const } }] },
+    { id: 'nimi-local', name: 'Nimi Local', models: [{ id: 'local', name: 'Qwen3-8B', badge: { text: '本机', tone: 'neutral' as const } }] },
+    { id: 'nimi-cloud.c-openai', name: 'openai', models: [{ id: 't-luna', name: 'gpt-6-luna' }, { id: 't-sol', name: 'gpt-6.1-sol' }] },
+    { id: 'nimi-cloud.c-dash', name: 'dashscope', models: [{ id: 't-qwen', name: 'qwen3.7-max' }] },
+  ]
+  const legacyCurrent = { provider: 'nimi', model: `config.main.${'a'.repeat(64)}` }
+  const directory = createSnapshotStore<ModelDirectoryState>(state({ current: legacyCurrent, groups }))
+  render(<ModelSelect renderSlot={renderLabel} locked={false} available directory={directory} load={vi.fn()}
+    resolveText={resolveText} select={vi.fn(async () => ({ ok: true as const, value: undefined }))} t={t} />)
+
+  // Legacy hashed ID resolves cleanly to Default instead of showing fallback "请选择模型"
+  const trigger = screen.getByRole('button', { name: /选择模型，当前 Default/ })
+  fireEvent.click(trigger)
+  fireEvent.click(screen.getByRole('menuitem', { name: /模型/ }))
+
+  // Route filter tabs appear and filter groups accurately
+  expect(screen.getByRole('tab', { name: '全部' })).toBeTruthy()
+  fireEvent.click(screen.getByRole('tab', { name: '云端' }))
+  expect(screen.queryByRole('menuitemradio', { name: /Qwen3-8B/ })).toBeNull()
+  expect(screen.getByRole('menuitemradio', { name: /qwen3\.7-max/ })).toBeTruthy()
+
+  fireEvent.click(screen.getByRole('tab', { name: '本机' }))
+  expect(screen.getByRole('menuitemradio', { name: /Qwen3-8B/ })).toBeTruthy()
+  expect(screen.queryByRole('menuitemradio', { name: /qwen3\.7-max/ })).toBeNull()
+
+  fireEvent.click(screen.getByRole('tab', { name: '已保存' }))
+  expect(screen.getByRole('menuitemradio', { name: /Default/ }).getAttribute('aria-checked')).toBe('true')
+})

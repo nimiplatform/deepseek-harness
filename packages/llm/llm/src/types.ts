@@ -50,6 +50,8 @@ export interface LlmFailure {
   readonly message: string
   /** Stable provider-neutral machine-routing code. */
   readonly code: string
+  /** Bounded serializable adapter diagnostics retained through errors and Session records. */
+  readonly diagnostics?: Readonly<Record<string, string>>
   /** HTTP status returned by the provider, when available. */
   readonly status?: number
   /** Provider-requested delay in milliseconds, when valid and available. */
@@ -174,10 +176,11 @@ export type FinishReason = FinishReasonMap[keyof FinishReasonMap]
 /**
  * Token accounting for one model call (cache fields are optional).
  *
- * Counts are DISJOINT: `inputTokens` is uncached input only; cached input is
- * reported separately as `cacheReadTokens`/`cacheWriteTokens` (billed input =
- * sum of the three). Adapters whose providers fold cache hits into a total
- * prompt count (DeepSeek's `prompt_tokens`) subtract them out.
+ * When a cache breakdown is reported, input/cache counts are disjoint and
+ * their sum is aggregate input. Adapters subtract reported cache hits from
+ * aggregate prompt counts. When no breakdown is available, `inputTokens`
+ * holds aggregate input and both cache fields remain absent. Missing cache
+ * counts do not establish zero cache usage or a known billing cost.
  */
 export interface TokenUsage {
   inputTokens: number
@@ -226,12 +229,14 @@ export interface LlmImageRequestPricing {
   priceImages(images: readonly ImageBlock[]): readonly LlmImageRequestPrice[]
 }
 
-/** Display metadata for one registered provider route. */
+/** Metadata for one registered provider route. */
 export interface LlmProviderInfo {
   /** Provider route key used by {@link GenerateOptions.provider}. */
   id: string
   /** Human-readable provider name for selectors and diagnostics. */
   name: string
+  /** Transport ceilings shared by the provider's models, independent of their token windows. */
+  requestEnvelope?: Readonly<{ maxMessages: number; maxBytes: number }>
 }
 
 /** Merge-extensible provider model modality vocabulary. */
@@ -452,6 +457,8 @@ export type ToolUpdate = 'in-history' | 'addition-only'
 
 /** Exact-route model metadata resolved by its owning adapter. */
 export interface LlmResolvedModelInfo extends LlmModelInfo {
+  /** Conservative request capacity advertised by the adapter when the full context window is unknown. */
+  requestCapacityFloorTokens?: number
   /** Provider-owned context capacity when known. */
   context?: LlmModelContext
   /** Adapter-configured per-request output cap materialized when callers omit one. */

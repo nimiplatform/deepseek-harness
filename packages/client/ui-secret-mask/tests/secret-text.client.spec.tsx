@@ -56,4 +56,21 @@ describe('SecretText', () => {
     expect(view.container.querySelector('[data-secret]')!.textContent).toBe(masked(OTHER))
     expect(view.getByRole('button', { name: 'Show secret' }).getAttribute('aria-pressed')).toBe('false')
   })
+
+  it('reveals and re-masks mixed-width graphemes across lines without exposing the original in hidden markup', () => {
+    const body = 'ab窗🌿e\u0301z\nΩ'
+    const raw = `BEGIN\n${body}\nEND`
+    const maskedBody = Array.from(body, char => char === '\n' ? char : '*').join('')
+    const maskedValue = `BEGIN\n${maskedBody}\nEND`
+    const input = props(raw, true, en)
+    const view = render(<SecretText {...input} node={{ ...input.node, data: { masked: maskedValue } }} />)
+    const text = view.container.querySelector('[data-secret]')!
+    expect(text.textContent).toBe(maskedValue)
+    expect(text.outerHTML).not.toContain('窗')
+    fireEvent.click(view.getByRole('button', { name: 'Show secret' }))
+    expect(text.textContent).toBe(raw)
+    fireEvent.click(view.getByRole('button', { name: 'Hide secret' }))
+    expect(text.textContent).toBe(maskedValue)
+    expect(text.outerHTML).not.toContain('🌿')
+  })
 })

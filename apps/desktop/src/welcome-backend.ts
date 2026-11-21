@@ -23,6 +23,8 @@ export interface DesktopWelcomeBackend {
   report(event: ProductEvent): Promise<void>
   /** @returns Configured-key presence and the shared language and theme preferences, without credential values. */
   read(): Promise<WelcomeState>
+  /** @returns The saved UI language and theme preferences without upstream account or provider credential calls. */
+  readPreferences(): Promise<Pick<WelcomeState, 'localePreference' | 'themePreference'>>
   /** @returns The saved UI language without account or provider requests. */
   readLocalePreference(): Promise<string | null>
   /**
@@ -138,6 +140,14 @@ export function connectDesktopWelcome(
       return enabled
     },
     async report(event) { await invoke({ namespace: 'productAnalytics', method: 'report', args: { event } }, AbortSignal.timeout(1000)) },
+    async readPreferences() {
+      const settings = await invoke({ namespace: 'settings', method: 'describe', args: {} })
+      if (!record(settings) || !Array.isArray(settings.namespaces)) throw new Error('desktop welcome: missing settings namespaces')
+      return {
+        localePreference: localePreference(settings.namespaces),
+        themePreference: themePreference(settings.namespaces),
+      }
+    },
     async readLocalePreference() {
       const settings = await invoke({ namespace: 'settings', method: 'describe', args: {} })
       if (!record(settings) || !Array.isArray(settings.namespaces)) throw new Error('desktop welcome: missing settings namespaces')

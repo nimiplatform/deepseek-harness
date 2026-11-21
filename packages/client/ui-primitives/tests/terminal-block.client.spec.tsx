@@ -40,6 +40,22 @@ function body(count: number): string {
 }
 
 describe('TerminalBlock prompt label', () => {
+  it('routes unmodified Home and End from the banner and Copy control to a scrollable command', () => {
+    const view = render(<TerminalBlock command={'first\nlast'} output="done" />)
+    const banner = view.container.querySelector<HTMLElement>('[data-terminal-banner]')!
+    Object.defineProperties(banner, { scrollHeight: { value: 420, configurable: true }, clientHeight: { value: 120 } })
+    const copy = view.getByRole('button', { name: terminalBlockLabels.copy })
+    expect(fireEvent.keyDown(copy, { key: 'End' })).toBe(false)
+    expect(banner.scrollTop).toBeGreaterThanOrEqual(300)
+    expect(fireEvent.keyDown(copy, { key: 'Home', shiftKey: true })).toBe(true)
+    expect(fireEvent.keyDown(banner.querySelector('[data-command-text]')!, { key: 'Home' })).toBe(true)
+    expect(banner.scrollTop).toBeGreaterThanOrEqual(300)
+    expect(fireEvent.keyDown(banner, { key: 'Home' })).toBe(false)
+    expect(banner.scrollTop).toBe(0)
+    Object.defineProperty(banner, 'scrollHeight', { value: 120 })
+    expect(fireEvent.keyDown(copy, { key: 'End' })).toBe(true)
+  })
+
   it('collapses the home directory itself to ~', () => {
     render(<TerminalBlock command="ls" cwd="/Users/me" home="/Users/me" />)
     expect(screen.getByText('~')).toBeTruthy()

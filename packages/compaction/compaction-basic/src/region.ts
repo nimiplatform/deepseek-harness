@@ -18,11 +18,11 @@ import {
 import type { CompactionResult } from '@deepseek-ai/dsh-compaction'
 import type { CommandId } from '@deepseek-ai/dsh-commands/types'
 import { createUserMessage, errorChain } from '@deepseek-ai/dsh-llm'
-import type { Message, UserMessage } from '@deepseek-ai/dsh-llm'
+import type { LlmProviderInfo, Message, UserMessage } from '@deepseek-ai/dsh-llm'
 import type { TokenMeasurement, TokenMeter } from '@deepseek-ai/dsh-token-meter'
-import { SessionSeq, type Session, type SessionEvent } from '@deepseek-ai/dsh-session'
+import { SessionSeq, type EpochHeader, type Session, type SessionEvent } from '@deepseek-ai/dsh-session'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import { frameSummary } from './summarizer.ts'
+import { COMPACTION_INSTRUCTION, frameSummary } from './summarizer.ts'
 import type { SummarizationInput, SummaryResult } from './summarizer.ts'
 interface RegionDependencies {
   readonly meter: TokenMeter
@@ -106,6 +106,44 @@ function systemHead(session: Session, headSeq: SessionSeq): SessionEvent<'system
 }
 
 /**
+ * Count the projected messages and estimate their encoded size, including the tool table.
+ * Reserve the summarizer's final instruction and leading system message before selecting
+ * a contiguous prefix. Attachment records contain handles; the remote asset bytes are separate.
+ * @param session - The conversation surface to measure.
+ * @param header - The request header supplying the tool declarations.
+ * @param limits - The provider's transport ceilings, when advertised.
+ * @returns Whether the request needs compaction and the largest prefix admissible for summarization, if limits are known.
+ */
+export function measureRequestEnvelope(
+  session: Session,
+  header: EpochHeader | undefined,
+  limits: LlmProviderInfo['requestEnvelope'],
+): { pressure: boolean; prefixNodes: number } | undefined {
+  if (!limits) return undefined
+  // Leave space for request-time context, the SDK's encoding and the next tool round.
+  const messageBudget = Math.floor(limits.maxMessages * 0.75)
+  const byteBudget = Math.floor(limits.maxBytes / 2)
+  const nodes = session.surface.nodes
+  let bytes = Buffer.byteLength(JSON.stringify(header?.tools ?? []))
+  let messages = 0
+  let prefixNodes = 0
+  const instructionBytes = Buffer.byteLength(COMPACTION_INSTRUCTION) + 64
+  const head = nodes[0]
+  const hasSystem = head !== undefined && systemHead(session, head) !== undefined
+  for (const [index, seq] of nodes.entries()) {
+    const event = session.eventAt(seq)
+    if (event === undefined) throw new Error(`compaction: missing surface event ${seq}`)
+    const message = session.deriveEventMessage(event)
+    if (message !== null) {
+      messages++
+      bytes += Buffer.byteLength(JSON.stringify(message))
+    }
+    if ((!hasSystem || index > 0) && messages + 1 <= messageBudget && bytes + instructionBytes <= byteBudget) prefixNodes++
+  }
+  return { pressure: messages >= messageBudget || bytes >= byteBudget, prefixNodes }
+}
+
+/**
  * Resolve the next range starting at the first non-system surface node while
  * retaining a priced recent tail and never splitting an assistant
  * tool-call/result pair. A `system/message` at surface node 0 is never inside
@@ -113,12 +151,14 @@ function systemHead(session: Session, headSeq: SessionSeq): SessionEvent<'system
  * @param session - session supplying authoritative current surface positions.
  * @param measurement - unified pressure and surface measurement from the conversation meter.
  * @param retainTokens - minimum recent tail budget retained verbatim.
+ * @param prefixNodes - maximum number of non-system nodes that fit the summary request.
  * @returns the inclusive positional seq range to compact, or `null`.
  */
 export function selectCompactableRange(
   session: Session,
   measurement: TokenMeasurement,
   retainTokens: number,
+  prefixNodes?: number,
 ): { start: SessionSeq; end: SessionSeq } | null {
   const pricedNodes = measurement.nodes
   if (pricedNodes.length === 0) return null
@@ -139,6 +179,7 @@ export function selectCompactableRange(
     keepFromIdx = index
     if (accumulated >= retainTokens) break
   }
+  if (prefixNodes !== undefined) keepFromIdx = Math.min(keepFromIdx, firstIdx + prefixNodes)
   if (keepFromIdx <= firstIdx) return null
 
   while (keepFromIdx > firstIdx) {

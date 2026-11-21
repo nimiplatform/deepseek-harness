@@ -3,7 +3,8 @@
  * report through clientModuleHost.rebuilt, and everything dies with the fiber.
  */
 import { EventEmitter } from 'node:events'
-import type { ServerResponse, IncomingMessage } from 'node:http'
+import { ServerResponse, IncomingMessage } from 'node:http'
+import { Socket } from 'node:net'
 import { mkdtempSync, rmSync, statSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -102,6 +103,37 @@ async function mount(clientModuleHost: FakeHost, webServer: WebServer) {
 }
 
 describe('hmr node half', () => {
+  it('keeps idle event streams open and skips closed or backpressured responses', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    const routes: WebRoute[] = []
+    const fiber = await mount(fakeClientModuleHost(new Map()), fakeHttpServer(routes))
+    try {
+      const request = new IncomingMessage(new Socket())
+      request.method = 'GET'
+      const response = new ServerResponse(request)
+      const write = vi.spyOn(response, 'write').mockReturnValue(true)
+      let backpressured = false
+      Object.defineProperty(response, 'writableNeedDrain', { get: () => backpressured })
+      await routes[0]!.handler(request, response)
+      write.mockClear()
+
+      vi.advanceTimersByTime(60_000)
+      expect(write.mock.calls).toEqual([[': keep-alive\n\n']])
+      backpressured = true
+      vi.advanceTimersByTime(60_000)
+      expect(write).toHaveBeenCalledTimes(1)
+      backpressured = false
+      vi.advanceTimersByTime(60_000)
+      expect(write).toHaveBeenCalledTimes(2)
+      response.emit('close')
+      vi.advanceTimersByTime(60_000)
+      expect(write).toHaveBeenCalledTimes(2)
+    } finally {
+      await fiber.dispose()
+      vi.useRealTimers()
+    }
+  })
+
   it('watches graph bundles, ignores map-only changes, and unwatches on dispose', async () => {
     const bundle = join(dir, 'a.js')
     writeFileSync(bundle, 'v1')

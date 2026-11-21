@@ -298,9 +298,12 @@ function runPnpm(
   if (pnpmEntry === undefined || pnpmEntry === '') {
     throw new Error('desktop package: invoke this script through a pnpm package command')
   }
-  if (run !== undefined) return run.run(args.join(' '), process.execPath, [pnpmEntry, ...args], { cwd, env })
+  const script = /\.[cm]?js$/u.test(pnpmEntry)
+  const command = script ? process.execPath : pnpmEntry
+  const commandArgs = script ? [pnpmEntry, ...args] : args
+  if (run !== undefined) return run.run(args.join(' '), command, commandArgs, { cwd, env })
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(process.execPath, [pnpmEntry, ...args], {
+    const child = spawn(command, commandArgs, {
       cwd,
       env,
       stdio: 'inherit',

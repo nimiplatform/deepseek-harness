@@ -1,0 +1,6 @@
+packages: []
+overrides:
+  '@nimiplatform/sdk': "file:../../../../nimi/.nimi/local/harness-implementation/platform-unified-20261121-v3/nimiplatform-sdk-0.24.0-rc.11.tgz"
+  '@nimiplatform/kit': "file:../../../../nimi/.nimi/local/harness-implementation/platform-unified-20261121-v3/nimiplatform-kit-0.24.0-rc.16.tgz"
+  '@nimiplatform/kit-protected-local-darwin-arm64': "file:../../../../nimi/.nimi/local/harness-implementation/platform-unified-20261121-v3/nimiplatform-kit-protected-local-darwin-arm64-0.24.0-rc.16.tgz"
+  '@nimiplatform/app-tools': 'file:../../../../nimi/.nimi/local/harness-implementation/platform-unified-20261121-v3/nimiplatform-app-tools-0.16.0-rc.10.tgz'

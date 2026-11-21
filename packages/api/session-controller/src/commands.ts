@@ -168,9 +168,10 @@ export class SessionCommandController {
     return this.agents.serializeImageAdmission(agent, async () => {
       try {
         await this.requireModel(request)
+        const committed = await this.ctx.llm.commitModelSelection(request.provider, request.model)
         const selected: AgentModelSelection = {
-          provider: request.provider,
-          model: request.model,
+          provider: committed.provider,
+          model: committed.model,
           ...(request.reasoningEffort === undefined
             ? {}
             : { reasoningEffort: brandString<ReasoningEffortId>(request.reasoningEffort) }),

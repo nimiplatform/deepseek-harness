@@ -78,6 +78,15 @@ export function subagentModelKey(route: AllowedSubagentModel): string {
 }
 
 /**
+ * Virtual Nimi direct-route groups (`nimi-local`, `nimi-cloud.*`) are composer-only
+ * picking conveniences that must be committed to a named Nimi AppAIConfig before
+ * execution; subagent allowlists only persist durable saved configurations.
+ */
+function isVirtualNimiRouteGroup(groupId: string): boolean {
+  return groupId === 'nimi-local' || groupId.startsWith('nimi-cloud.')
+}
+
+/**
  * Join live adapter metadata with stored routes that remain removable after disappearance.
  * @param groups - Current model directory grouped by provider.
  * @param stored - Routes in the effective settings value.
@@ -90,19 +99,21 @@ export function subagentModelCandidates(
   selected: ReadonlySet<string>,
 ): SubagentModelCandidate[] {
   const storedByKey = new Map(stored.map(route => [subagentModelKey(route), route]))
-  const candidates = groups.flatMap(group => group.models.map((model): SubagentModelCandidate => {
-    const route = { provider: group.id, model: model.id }
-    const key = subagentModelKey(route)
-    storedByKey.delete(key)
-    return {
-      ...route,
-      key,
-      providerName: group.name,
-      modelName: model.name,
-      available: true,
-      selected: selected.has(key),
-    }
-  }))
+  const candidates = groups
+    .filter(group => !isVirtualNimiRouteGroup(group.id))
+    .flatMap(group => group.models.map((model): SubagentModelCandidate => {
+      const route = { provider: group.id, model: model.id }
+      const key = subagentModelKey(route)
+      storedByKey.delete(key)
+      return {
+        ...route,
+        key,
+        providerName: group.name,
+        modelName: model.name,
+        available: true,
+        selected: selected.has(key),
+      }
+    }))
   for (const route of storedByKey.values()) {
     const key = subagentModelKey(route)
     candidates.push({

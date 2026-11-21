@@ -238,6 +238,8 @@ interface LlmFailure {
   readonly message: string
   /** Stable provider-neutral machine-routing code. */
   readonly code: string
+  /** Bounded serializable adapter diagnostics retained through errors and Session records. */
+  readonly diagnostics?: Readonly<Record<string, string>>
   /** HTTP status returned by the provider, when available. */
   readonly status?: number
   /** Provider-requested delay in milliseconds, when valid and available. */
@@ -339,16 +341,17 @@ interface AppIdentity {
 
 ## `TokenUsage`
 
-逐调用 token 记账。各计数**互不重叠**：`inputTokens` 只包含未缓存输入；缓存输入单独报告，计费输入是三者之和。若提供方把缓存命中折入单一提示词总数（如 DeepSeek 的 `prompt_tokens`），适配器会再将其扣除。可选的 `totalTokens` 是精确的提示词与输出聚合计数，由适配器保留提供方原值或从权威聚合计数重建；不可用或不一致时省略。`reasoningTokens` 存在时只是信息性细节，已经包含在 `outputTokens` 中；汇总时不得重复相加。
+逐调用 token 记账。提供方报告缓存明细时，`inputTokens` 是未缓存输入，三项输入计数互不重叠，适配器从聚合输入中扣除已报告的缓存命中。缺少缓存明细时，`inputTokens` 保存聚合输入，两项缓存字段保持缺省。仅凭聚合输入无法确定依赖缓存价格的账单费用。可选的 `totalTokens` 是精确的提示词与输出聚合计数，由适配器保留提供方原值或从权威聚合计数重建；不可用或不一致时省略。`reasoningTokens` 存在时只是信息性细节，已经包含在 `outputTokens` 中；汇总时不得重复相加。
 
 ```ts type-equiv
 /**
  * Token accounting for one model call (cache fields are optional).
  *
- * Counts are DISJOINT: `inputTokens` is uncached input only; cached input is
- * reported separately as `cacheReadTokens`/`cacheWriteTokens` (billed input =
- * sum of the three). Adapters whose providers fold cache hits into a total
- * prompt count (DeepSeek's `prompt_tokens`) subtract them out.
+ * When a cache breakdown is reported, input/cache counts are disjoint and
+ * their sum is aggregate input. Adapters subtract reported cache hits from
+ * aggregate prompt counts. When no breakdown is available, `inputTokens`
+ * holds aggregate input and both cache fields remain absent. Missing cache
+ * counts do not establish zero cache usage or a known billing cost.
  */
 interface TokenUsage {
   inputTokens: number
@@ -467,12 +470,14 @@ interface AdapterRegistrationHandle {
 ```
 
 ```ts type-equiv
-/** Display metadata for one registered provider route. */
+/** Metadata for one registered provider route. */
 interface LlmProviderInfo {
   /** Provider route key used by {@link GenerateOptions.provider}. */
   id: string
   /** Human-readable provider name for selectors and diagnostics. */
   name: string
+  /** Transport ceilings shared by the provider's models, independent of their token windows. */
+  requestEnvelope?: Readonly<{ maxMessages: number; maxBytes: number }>
 }
 ```
 
@@ -619,6 +624,8 @@ interface LlmModelReasoningInfo {
 ```ts type-equiv
 /** Exact-route model metadata resolved by its owning adapter. */
 interface LlmResolvedModelInfo extends LlmModelInfo {
+  /** Conservative request capacity advertised by the adapter when the full context window is unknown. */
+  requestCapacityFloorTokens?: number
   /** Provider-owned context capacity when known. */
   context?: LlmModelContext
   /** Adapter-configured per-request output cap materialized when callers omit one. */
@@ -967,6 +974,21 @@ declare abstract class LlmAdapter {
     _signal?: AbortSignal,
   ): Promise<LlmResolvedModelInfo>;
   /**
+   * Materialize or normalize a GUI/command model selection before validation
+   * and durable session persistence. Adapters that expose virtual route entries
+   * (such as Nimi Cloud/Local direct selection backed by canonical AppAIConfig
+   * records) override this to return the durable provider/model identity.
+   * @param provider - registered provider route selected by the caller.
+   * @param model - catalog model id selected by the caller.
+   * @param _signal - optional cancellation signal.
+   * @returns the normalized provider/model identity to validate and persist.
+   */
+  commitModelSelection(
+    provider: string,
+    model: string,
+    _signal?: AbortSignal,
+  ): Promise<{ readonly provider: string; readonly model: string }>;
+  /**
    * Bind exact model metadata and the eventual request dispatch to one adapter generation.
    * Dynamic adapters override this so settings changes between preparation and
    * dispatch cannot combine one generation's capabilities with another's endpoint.
@@ -1150,6 +1172,16 @@ async listModels(provider: string): Promise<LlmModelInfo[]>
  * @returns exact model identity plus available context and reasoning metadata.
  */
 async resolveModelInfo( provider: string, model: string, signal?: AbortSignal, ): Promise<LlmResolvedModelInfo>
+
+/**
+ * Materialize or normalize a caller's catalog selection through the owning adapter
+ * before capability validation and durable Session persistence.
+ * @param provider - registered provider route selected by the caller.
+ * @param model - catalog model id selected by the caller.
+ * @param signal - optional cancellation signal.
+ * @returns the durable provider/model identity returned by the adapter.
+ */
+async commitModelSelection( provider: string, model: string, signal?: AbortSignal, ): Promise<{ readonly provider: string; readonly model: string }>
 
 /**
  * Validate a conversation call config against its exact model capability and

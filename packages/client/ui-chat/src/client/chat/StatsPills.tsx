@@ -106,6 +106,7 @@ export function formatDuration(ms: number, t: ChatViewSlotProps['t']): string {
  * 100, and no billed input returns null.
  */
 export function cacheHitPercent(usage: TokenUsageProjection): string | null {
+  if (usage.unclassifiedInputTokens) return null
   const denominator = billedInputTokens(usage)
   return formatCacheHitPercent(usage.cacheReadTokens, denominator)
 }
@@ -116,7 +117,7 @@ export function cacheHitPercent(usage: TokenUsageProjection): string | null {
  * @returns billed input tokens.
  */
 export function billedInputTokens(usage: TokenUsageProjection): number {
-  return usage.uncachedInputTokens + usage.cacheReadTokens + usage.cacheWriteTokens
+  return usage.uncachedInputTokens + usage.cacheReadTokens + usage.cacheWriteTokens + (usage.unclassifiedInputTokens ?? 0)
 }
 
 type Translate = ChatViewSlotProps['t']
@@ -329,11 +330,13 @@ export const UsagePill = memo(function UsagePill({ useProjection, usePerformance
             <dd>{`${cacheHit}%`}</dd>
           </>
         )}
-        <dt>{t('message.turnUsage.input')}</dt>
-        <dd>{exactCount(usage.uncachedInputTokens, t)}</dd>
-        <dt>{t('message.turnUsage.cacheRead')}</dt>
-        <dd>{exactCount(usage.cacheReadTokens, t)}</dd>
-        {usage.cacheWriteTokens !== 0 && (
+        <dt>{t(usage.unclassifiedInputTokens ? 'message.turnUsage.aggregateInput' : 'message.turnUsage.input')}</dt>
+        <dd>{exactCount(usage.unclassifiedInputTokens ? billedInputTokens(usage) : usage.uncachedInputTokens, t)}</dd>
+        {!usage.unclassifiedInputTokens && <>
+          <dt>{t('message.turnUsage.cacheRead')}</dt>
+          <dd>{exactCount(usage.cacheReadTokens, t)}</dd>
+        </>}
+        {!usage.unclassifiedInputTokens && usage.cacheWriteTokens !== 0 && (
           <>
             <dt>{t('message.turnUsage.cacheWrite')}</dt>
             <dd>{exactCount(usage.cacheWriteTokens, t)}</dd>

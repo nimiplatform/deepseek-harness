@@ -1,0 +1,36 @@
+app_id: ai.nimi.dsh
+display_name: Nimi DSH
+version: 0.2.2-rc.3.20261118.6
+profile: standalone
+npm_package_name: nimi-dsh
+cargo_package_name: nimi-dsh-shell
+tauri_identifier: ai.nimi.apps.ai.nimi.dsh
+package_author: DeepSeek Harness contributors and Nimi Platform
+submission_role: developer-submitted-input
+capability_contract_refs:
+  - text.generate
+  - audio.transcribe
+required_standardized_feature_refs: []
+storage_policy:
+  kind: app-owned-os-storage
+  os_storage_disclosure:
+    - path_pattern: <user-home>/.nimi-dsh/**
+      purpose: Account-partitioned sessions, workspace files, and App settings.
+      expected_size_band: Depends on the number and size of tasks.
+support_manifest:
+  diagnostics_bundle_fields:
+    - app_version
+    - runtime_status
+  redaction_rules:
+    - credentials
+  user_visible_issue_categories:
+    - startup
+    - runtime
+  escalation_path: README.md#support
+  kill_switch_visibility: visible
+  recovery_instructions: Restart the App from Nimi. If the problem persists, reinstall the current admitted release.
+review_inputs:
+  manifest: nimi.app.yaml
+  build_profile: .nimi/config/build-profile.yaml
+  scaffold_boundary: .nimi/contracts/scaffold-boundary.yaml
+admission_truth: platform-owned-after-review

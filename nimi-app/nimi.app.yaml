@@ -1,0 +1,39 @@
+app_id: ai.nimi.dsh
+display_name: Nimi DSH
+version: 0.2.2-rc.3.20261118.6
+profile: standalone
+manifest_role: submitted-input
+app_access:
+  - runtime.consume
+  - app.activity
+  - integration.provide
+  - integration.consume
+capability_contract_refs:
+  - text.generate
+  - audio.transcribe
+required_standardized_feature_refs: []
+storage_policy:
+  kind: app-owned-os-storage
+  os_storage_disclosure:
+    - path_pattern: <user-home>/.nimi-dsh/**
+      purpose: Account-partitioned sessions, workspace files, and App settings.
+      expected_size_band: Depends on the number and size of tasks.
+metadata:
+  summary: Use DeepSeek Harness with the model configured in Nimi Home.
+  icon: icon.png
+local_development:
+  electron:
+    renderer_origin: http://127.0.0.1:4143
+    host_source_directory: host
+  web:
+    command: pnpm run dev:web-renderer
+    origin: ""
+    redirect_uri: ""
+    client_id: ""
+    local:
+      origin: https://127.0.0.1:4510
+      redirect_uri: https://127.0.0.1:4510/
+      client_id: ai.nimi.dsh.web.dev
+      realm_environment_id: dev
+      realm_url: http://127.0.0.1:3002
+      official_web_url: http://localhost:3000

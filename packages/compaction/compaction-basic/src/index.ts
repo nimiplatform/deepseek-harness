@@ -27,6 +27,7 @@ import {
 import {
   assertNoActiveCompaction,
   compactSurfaceRegion,
+  measureRequestEnvelope,
   selectCompactableRange,
 } from './region.ts'
 import { summarizeWithLlm } from './summarizer.ts'
@@ -290,10 +291,24 @@ export class BasicCompactionEngine extends CompactionEngine {
     agent: Agent,
     signal?: AbortSignal,
   ): Promise<SummaryResult> {
-    const target = conversationTarget(agent, (await this.answeredRoute).stateOf(agent.session))
-    const config = target === undefined
+    const answered = (await this.answeredRoute).stateOf(agent.session)
+    let target = conversationTarget(agent, answered)
+    let config = target === undefined
       ? this.config
       : resolveTargetPolicy(this.config, target)
+    // An imported answer can name its export source instead of an installed adapter.
+    // The current request has its own selected route. A registered route that
+    // fails at dispatch still reports its original failure to the user.
+    if (answered && !config.summarizationProvider) {
+      const providers = this.ctx.llm.listProviders()
+      if (!providers.some(row => row.id === answered.provider)) {
+        const current = routedTarget(agent.session) ?? completeRoute(agent.options)
+        if (current && providers.some(row => row.id === current.provider)) {
+          target = current
+          config = resolveTargetPolicy(this.config, current)
+        }
+      }
+    }
     return summarizeWithLlm(this.ctx, config, input, agent, target, signal)
   }
 
@@ -320,7 +335,8 @@ export class BasicCompactionEngine extends CompactionEngine {
       case 'context-overflow': {
         this.ctx.get('toolResultPruner')?.pruneSession(agent.session)
         const measurement = this.ctx.tokenMeter.measure(agent.session)
-        const range = selectCompactableRange(agent.session, measurement, 0)
+        const envelope = this.requestEnvelope(agent, header)
+        const range = selectCompactableRange(agent.session, measurement, 0, envelope?.prefixNodes)
         if (range === null) return null
         return this.compactRegion(range.start, range.end, agent, signal)
       }
@@ -328,6 +344,13 @@ export class BasicCompactionEngine extends CompactionEngine {
       default:
         assertNever(trigger, 'compaction trigger')
     }
+  }
+
+  /** Session presets share the registered provider's transport limits. */
+  private requestEnvelope(agent: Agent, header: EpochHeader | undefined) {
+    const provider = header?.config.provider ?? agent.options.provider
+    const limits = this.ctx.llm.listProviders().find(row => row.id === provider)?.requestEnvelope
+    return measureRequestEnvelope(agent.session, header, limits)
   }
 
   /** Price the proposed header; switch checks require history below its threshold. */
@@ -342,10 +365,24 @@ export class BasicCompactionEngine extends CompactionEngine {
     const meter = this.ctx.tokenMeter
     let measurement = meter.measure(agent.session, header)
     const prune = this.ctx.get('toolResultPruner')
-    const info = await this.ctx.llm.resolveModelInfo(target.provider, target.model, signal)
     assertNoActiveCompaction(agent.session, 'automatic pressure compaction')
+    // The transport can fill with short turns even while its token meter is below the floor.
+    let envelope = this.requestEnvelope(agent, header)
+    let result: CompactionResult | null = null
+    for (let attempt = 0; envelope?.pressure && attempt <= policy.compactionRetries; attempt++) {
+      const prefix = Math.min(envelope.prefixNodes, Math.ceil(measurement.nodes.length / 2))
+      const range = selectCompactableRange(agent.session, measurement, 0, prefix)
+      if (range === null) throw new Error('No complete history span fits the summary request. Shorten the largest input or reduce the active tool declarations.')
+      result = await this.compactRegion(range.start, range.end, agent, signal)
+      measurement = meter.measure(agent.session, header)
+      envelope = this.requestEnvelope(agent, header)
+    }
+    const info = await this.ctx.llm.resolveModelInfo(target.provider, target.model, signal)
     const targetKey = `${target.provider}/${target.model}`
     if (info.context === undefined) {
+      // A lower bound cannot establish overflow. The transport budget has already
+      // been checked; the selected provider admits or rejects the actual token demand.
+      if (info.requestCapacityFloorTokens !== undefined) return result
       throw new TargetPressureConfigError(
         targetKey,
         `compaction-basic: no context capacity for ${targetKey}; `
@@ -357,7 +394,7 @@ export class BasicCompactionEngine extends CompactionEngine {
       info.context.contextWindow,
       reservedCompletionTokens(header, info.defaultMaxTokens),
     )
-    if (measurement.totalTokens < spec.thresholdTokens) return null
+    if (measurement.totalTokens < spec.thresholdTokens) return result
 
     // Once pressure qualifies, land the model-free pass before choosing a
     // summary range, then remeasure through the singleton replay fold.
@@ -365,11 +402,11 @@ export class BasicCompactionEngine extends CompactionEngine {
       prune.pruneSession(agent.session)
       measurement = meter.measure(agent.session, header)
     }
-    if (measurement.totalTokens < spec.thresholdTokens) return null
+    if (measurement.totalTokens < spec.thresholdTokens) return result
 
-    let result: CompactionResult | null = null
     for (let attempt = 0; attempt <= spec.compactionRetries; attempt += 1) {
-      const range = selectCompactableRange(agent.session, measurement, spec.retainTokens)
+      const range = selectCompactableRange(agent.session, measurement, spec.retainTokens,
+        this.requestEnvelope(agent, header)?.prefixNodes)
       if (range === null) {
         if (result === null && !requireBelowThreshold) return null
         throw new Error(
@@ -437,6 +474,7 @@ export class BasicCompactionEngine extends CompactionEngine {
             agent.session,
             this.ctx.tokenMeter.measure(agent.session),
             0,
+            this.requestEnvelope(agent, agent.session.requestHeader())?.prefixNodes,
           )
           if (range === null) return null
           return await compactSurfaceRegion(

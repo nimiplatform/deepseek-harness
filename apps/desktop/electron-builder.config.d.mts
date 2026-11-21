@@ -18,8 +18,7 @@ export interface DesktopElectronBuilderConfig {
   readonly asarUnpack: readonly string[]
   readonly extraResources: readonly [
     { readonly from: string, readonly to: 'runtime' },
-    { readonly from: string, readonly to: 'icon.png' },
-    ...{ readonly from: string, readonly to: 'tray.ico' }[],
+    ...({ readonly from: string, readonly to: 'nimi-native/protected-local', readonly filter: readonly string[] } | { readonly from: string, readonly to: 'icon.png' | 'tray.ico' })[],
   ]
   readonly mac: {
     readonly extendInfo: {

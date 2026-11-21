@@ -372,8 +372,9 @@ export class ChatViewport {
             if (box.element.getBoundingClientRect().top - shift - box.marginTop >= viewportTop) travelling.add(box.element)
           }
         }
-        // Scrolling forward past closing rows shows them shrinking; faded rows would leave their space empty.
-        if (tail && target > start) for (const element of below) travelling.add(element)
+        // Rows below a reading anchor shrink in flow with their surviving neighbours.
+        // Pinning their pixels while those neighbours move opens a gap between steps.
+        if (!tail || target > start) for (const element of below) travelling.add(element)
         return travelling
       },
       prepare: (progress, cancelled) => {

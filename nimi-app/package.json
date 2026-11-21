@@ -1,0 +1,43 @@
+{
+  "name": "nimi-dsh",
+  "version": "0.2.2-rc.3.20261118.6",
+  "private": true,
+  "type": "module",
+  "author": "DeepSeek Harness contributors and Nimi Platform",
+  "license": "MIT",
+  "packageManager": "pnpm@10.34.7",
+  "scripts": {
+    "build:electron": "node lifecycle.mjs host",
+    "build:electron:macos": "node lifecycle.mjs package-macos",
+    "test:app": "node lifecycle.mjs test",
+    "pack": "nimi-app pack",
+    "dev:renderer": "node lifecycle.mjs renderer",
+    "dev": "nimi-app dev --shell electron",
+    "dev:shell": "nimi-app dev",
+    "dev:electron": "nimi-app dev --shell electron",
+    "dev:web": "nimi-app dev --platform web",
+    "dev:web-renderer": "vite --config vite.web.config.ts",
+    "sync": "nimi-app sync",
+    "build:settings": "tsc --noEmit && vite build",
+    "build:web": "tsc --noEmit && vite build --config vite.web.config.ts --mode web-release",
+    "build:web:local": "tsc --noEmit && vite build --config vite.web.config.ts"
+  },
+  "dependencies": {
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "@nimiplatform/sdk": "^0.24.0-rc.10",
+    "@nimiplatform/kit": "^0.24.0-rc.16"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@types/node": "^24.19.2",
+    "@vitejs/plugin-react": "^6.1.2",
+    "@tailwindcss/vite": "^4.3.3",
+    "tailwindcss": "^4.3.3",
+    "vite": "^8.3.8",
+    "typescript": "^6.0.3",
+    "@nimiplatform/app-tools": "^0.16.0-rc.10",
+    "@nimiplatform/nimi-coding": "0.7.0"
+  }
+}

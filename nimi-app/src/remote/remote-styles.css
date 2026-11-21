@@ -1,0 +1,404 @@
+@import "@nimiplatform/kit/ui/styles.css";
+@import "@nimiplatform/kit/ui/themes/light.css";
+@import "@nimiplatform/kit/ui/themes/dark.css";
+@import "@nimiplatform/kit/ui/themes/nimi-accent.css";
+@import "tailwindcss";
+@source "../../node_modules/@nimiplatform/kit/dist/**/*.{js,mjs}";
+
+:root,
+[data-remote-theme="light"] {
+  --rc-bg: #f8fafc;
+  --rc-surface: #ffffff;
+  --rc-surface-muted: #f1f5f9;
+  --rc-border: #e2e8f0;
+  --rc-text: #0f172a;
+  --rc-text-muted: #475569;
+  --rc-accent: #2563eb;
+  --rc-accent-text: #ffffff;
+  --rc-danger: #dc2626;
+  --rc-warning: #d97706;
+  --rc-success: #16a34a;
+  --rc-user-bg: #2563eb;
+  --rc-user-text: #ffffff;
+  --rc-diff-del-bg: rgba(220, 38, 38, 0.1);
+  --rc-diff-add-bg: rgba(22, 163, 74, 0.12);
+}
+
+[data-remote-theme="dark"] {
+  --rc-bg: #0b1120;
+  --rc-surface: #111827;
+  --rc-surface-muted: #1e293b;
+  --rc-border: #334155;
+  --rc-text: #f8fafc;
+  --rc-text-muted: #94a3b8;
+  --rc-accent: #3b82f6;
+  --rc-accent-text: #ffffff;
+  --rc-danger: #f87171;
+  --rc-warning: #fbbf24;
+  --rc-success: #4ade80;
+  --rc-user-bg: #2563eb;
+  --rc-user-text: #ffffff;
+  --rc-diff-del-bg: rgba(248, 113, 113, 0.16);
+  --rc-diff-add-bg: rgba(74, 222, 128, 0.16);
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  background: var(--rc-bg);
+  color: var(--rc-text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+.rc-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--rc-bg);
+  color: var(--rc-text);
+}
+
+.rc-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  background: var(--rc-surface);
+  border-bottom: 1px solid var(--rc-border);
+  flex-shrink: 0;
+}
+
+.rc-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.rc-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.rc-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--rc-border);
+  background: var(--rc-surface);
+  color: var(--rc-text);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.rc-btn:hover:not(:disabled) {
+  background: var(--rc-surface-muted);
+}
+
+.rc-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.rc-btn-primary {
+  background: var(--rc-accent);
+  border-color: var(--rc-accent);
+  color: var(--rc-accent-text);
+}
+
+.rc-btn-primary:hover:not(:disabled) {
+  opacity: 0.92;
+  background: var(--rc-accent);
+}
+
+.rc-btn-danger {
+  border-color: var(--rc-danger);
+  color: var(--rc-danger);
+}
+
+.rc-workspace {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
+}
+
+.rc-workspace[data-files-open="true"] {
+  grid-template-columns: 260px minmax(0, 1fr) 300px;
+}
+
+@media (max-width: 900px) {
+  .rc-workspace,
+  .rc-workspace[data-files-open="true"] {
+    grid-template-columns: 1fr;
+  }
+  .rc-sidebar[data-hidden-mobile="true"],
+  .rc-files[data-hidden-mobile="true"] {
+    display: none;
+  }
+}
+
+.rc-sidebar {
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--rc-border);
+  background: var(--rc-surface);
+  min-height: 0;
+}
+
+.rc-sidebar-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px;
+  border-bottom: 1px solid var(--rc-border);
+  gap: 8px;
+}
+
+.rc-session-list {
+  flex: 1;
+  overflow: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.rc-session-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--rc-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.rc-session-item:hover {
+  background: var(--rc-surface-muted);
+}
+
+.rc-session-item[data-active="true"] {
+  background: var(--rc-surface-muted);
+  border-color: var(--rc-accent);
+}
+
+.rc-session-title {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rc-session-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--rc-text-muted);
+}
+
+.rc-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  border: 1px solid var(--rc-border);
+}
+
+.rc-badge[data-tone="waiting"] {
+  border-color: var(--rc-warning);
+  color: var(--rc-warning);
+}
+
+.rc-badge[data-tone="running"] {
+  border-color: var(--rc-accent);
+  color: var(--rc-accent);
+}
+
+.rc-badge[data-tone="ready"] {
+  border-color: var(--rc-success);
+  color: var(--rc-success);
+}
+
+.rc-badge[data-tone="error"] {
+  border-color: var(--rc-danger);
+  color: var(--rc-danger);
+}
+
+.rc-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--rc-bg);
+}
+
+.rc-main-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  background: var(--rc-surface);
+  border-bottom: 1px solid var(--rc-border);
+}
+
+.rc-thread {
+  flex: 1;
+  overflow: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.rc-msg {
+  max-width: 820px;
+  width: fit-content;
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-size: 14px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.rc-msg-user {
+  align-self: flex-end;
+  background: var(--rc-user-bg);
+  color: var(--rc-user-text);
+}
+
+.rc-msg-assistant {
+  align-self: flex-start;
+  background: var(--rc-surface);
+  border: 1px solid var(--rc-border);
+}
+
+.rc-msg-tool {
+  align-self: flex-start;
+  width: 100%;
+  background: var(--rc-surface-muted);
+  border: 1px solid var(--rc-border);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+}
+
+.rc-approval-card {
+  max-width: 820px;
+  border: 1.5px solid var(--rc-warning);
+  border-radius: 12px;
+  background: var(--rc-surface);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.rc-code-block {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--rc-surface-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  overflow: auto;
+  max-height: 220px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.rc-diff-del {
+  background: var(--rc-diff-del-bg);
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+
+.rc-diff-add {
+  background: var(--rc-diff-add-bg);
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+
+.rc-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 16px;
+  background: var(--rc-surface);
+  border-top: 1px solid var(--rc-border);
+}
+
+.rc-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 60px;
+  max-height: 180px;
+  resize: vertical;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--rc-border);
+  background: var(--rc-bg);
+  color: var(--rc-text);
+  font: inherit;
+  font-size: 14px;
+}
+
+.rc-composer-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.rc-files {
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--rc-border);
+  background: var(--rc-surface);
+  min-height: 0;
+}
+
+.rc-file-list {
+  flex: 1;
+  overflow: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.rc-file-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--rc-border);
+  font-size: 13px;
+}
+
+.rc-empty {
+  padding: 32px 24px;
+  text-align: center;
+  color: var(--rc-text-muted);
+  font-size: 14px;
+}

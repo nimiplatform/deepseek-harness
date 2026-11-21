@@ -453,8 +453,9 @@ async function writeReviewFixture(root: string): Promise<void> {
   await writeFile(join(root, 'contents.json'), JSON.stringify(contents))
 }
 
+const TEST_GIT_ENV = { GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' }
 async function git(cwd: string, ...args: string[]): Promise<string> {
-  const { stdout } = await run('git', args, { cwd, env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' } })
+  const { stdout } = await run('git', args, { cwd, env: { ...process.env, ...TEST_GIT_ENV } })
   return stdout.trim()
 }
 
@@ -992,7 +993,11 @@ it.skipIf(MODE === 'record')('shows the local changes of the Session by scope an
   await mkdir(join(project, 'src'))
   await writeFile(join(project, 'src', 'app.ts'), 'export const app = 1\n')
   await git(project, 'add', 'src/app.ts')
-  await git(project, 'commit', '--quiet', '-m', 'app')
+  // The menu sorts by committer date. This child must be newer even when the fixture runs within one second.
+  const topicDate = `${Number(await git(project, 'show', '-s', '--format=%ct', 'HEAD')) + 1} +0000`
+  await run('git', ['commit', '--quiet', '-m', 'app'], {
+    cwd: project, env: { ...process.env, ...TEST_GIT_ENV, GIT_AUTHOR_DATE: topicDate, GIT_COMMITTER_DATE: topicDate },
+  })
   await git(project, 'branch', 'topic')
   await writeFile(join(project, 'src', 'extra.ts'), 'export const extra = 1\n')
   await git(project, 'add', 'src/extra.ts')

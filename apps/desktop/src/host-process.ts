@@ -6,6 +6,8 @@ import { join } from 'node:path'
 import { z } from 'zod'
 import type { PlatformSession } from '@deepseek-ai/dsh-deepseek-account'
 import { desktopNodeEnvironment } from './node-environment.ts'
+import { serveNimiText } from './nimi-text.ts'
+import { serveNimiEcosystem, type NimiEcosystemBridge, type NimiEcosystemServices } from './nimi-ecosystem.ts'
 import { parsePluginOperationRecord, type PluginOperationRecord, type PluginOperationRunId } from '@deepseek-ai/dsh-plugin-manager/diagnostic'
 
 interface ReadyEvent {
@@ -30,6 +32,11 @@ type DesktopHostEvent = ReadyEvent | FatalEvent | PlatformSessionEvent | {
   readonly type: 'starting'
   readonly runId: PluginOperationRunId
 } | { readonly type: 'shutdown-complete' } | {
+  readonly type: 'boot-injections'
+  readonly requestId: number
+  readonly injections?: readonly unknown[]
+  readonly error?: string
+} | {
   readonly type: 'file-drag-resource'
   readonly requestId: number
   readonly resource: { readonly path: string; readonly sha256: string; readonly size: number } | null
@@ -105,6 +112,9 @@ function isDesktopHostEvent(message: unknown): message is DesktopHostEvent {
     }
     case 'fatal':
       return typeof candidate.message === 'string' && (candidate.diagnostic === undefined || typeof candidate.diagnostic === 'string')
+    case 'boot-injections':
+      return Number.isSafeInteger(candidate.requestId) && (candidate.error === undefined
+        ? Array.isArray(candidate.injections) : typeof candidate.error === 'string')
     case 'update-tasks':
       return Number.isSafeInteger(candidate.requestId) && typeof candidate.active === 'boolean'
         && (candidate.error === undefined || typeof candidate.error === 'string')
@@ -190,6 +200,8 @@ export class DesktopHostProcess {
     resolve: (response: DesktopHostControlResponse) => void
     reject: (error: Error) => void
   }>()
+  private nimiTextBridge: ReturnType<typeof serveNimiText> | undefined
+  private nimiEcosystemBridge: NimiEcosystemBridge | undefined
 
   /**
    * @param node - Absolute Electron executable in Node mode.
@@ -215,7 +227,32 @@ export class DesktopHostProcess {
 
     private readonly onPlatformSession?: (session: PlatformSession | null) => void,
     private readonly onPluginOperation?: (record: PluginOperationRecord) => void,
+    private readonly nimiText?: Parameters<typeof serveNimiText>[1],
+    private readonly nimiModelInfo?: Parameters<typeof serveNimiText>[2],
+    private readonly nimiEcosystem?: NimiEcosystemServices,
   ) {}
+
+  /** A model record can be edited in Home while the DSH window is in the background. */
+  refreshNimiModels(): void {
+    if (this.nimiModelInfo && !this.stopping && this.child?.connected) {
+      this.child.send({ type: 'nimi-models-refresh' }, () => { /* A disconnected Host is already retiring. */ })
+    }
+  }
+
+  /** Adopt the latest observed revision for one or all Nimi AIConfig records in the worker adapter. */
+  adoptNimiRevision(configRef?: string): void {
+    if (this.nimiModelInfo && !this.stopping && this.child?.connected) {
+      this.child.send({ type: 'nimi-adopt-revision', ...(configRef ? { configRef } : {}) }, () => { /* A disconnected Host is already retiring. */ })
+    }
+  }
+
+  /** Invoke an authenticated Host->Worker Nimi RPC (remote session provider, Home chat import, activity checks). */
+  callNimiWorker<T = unknown>(operation: string, payload?: unknown, signal?: AbortSignal, timeoutMs?: number): Promise<T> {
+    if (!this.nimiEcosystemBridge || this.stopping || this.failureReported) {
+      return Promise.reject(new Error('Nimi worker RPC bridge is unavailable.'))
+    }
+    return this.nimiEcosystemBridge.callWorker<T>(operation, payload, signal, timeoutMs)
+  }
 
   /**
    * Start this child once and await its Web application URL.
@@ -235,14 +272,22 @@ export class DesktopHostProcess {
       ...this.packageManager === undefined ? [] : [this.packageManager.pnpm, this.packageManager.nodeBin],
     ], {
       cwd: this.projectDir,
-      env: desktopNodeEnvironment(this.node, undefined, this.environment),
+      env: desktopNodeEnvironment(this.node, undefined, this.nimiText === undefined ? this.environment : {
+        ...Object.fromEntries(Object.entries(this.environment).filter(([name]) => !name.startsWith('NIMI_'))),
+        DSH_NIMI_TEXT: '1',
+      }),
       stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
     })
     this.child = child
+    const nimi = this.nimiText === undefined ? undefined : serveNimiText(child, this.nimiText, this.nimiModelInfo)
+    const ecosystem = this.nimiEcosystem === undefined ? undefined : serveNimiEcosystem(child, this.nimiEcosystem)
+    this.nimiTextBridge = nimi
+    this.nimiEcosystemBridge = ecosystem
     child.stderr?.setEncoding('utf8')
     child.stderr?.on('data', (chunk: string) => { this.stderr = (this.stderr + chunk).slice(-MAX_HOST_DIAGNOSTIC_CHARS) })
     child.stdout?.pipe(process.stdout)
     child.on('message', (message: unknown) => {
+      if (nimi?.receive(message) || ecosystem?.receive(message)) return
       if (typeof message === 'object' && message !== null && 'type' in message && message.type === 'plugin-operation') {
         const record = 'record' in message ? parsePluginOperationRecord(message.record) : undefined
         if (record !== undefined && record.runId === this.runId) {
@@ -337,9 +382,16 @@ export class DesktopHostProcess {
     return response.resource
   }
 
+  /** @returns The plugin scripts and index data for the document being opened. */
+  async bootInjections(): Promise<readonly unknown[]> {
+    const response = await this.control({ type: 'boot-injections' }, 10_000, 'Desktop workspace boot timed out', 'desktop workspace')
+    if (response.type !== 'boot-injections' || !response.injections) throw new Error('Desktop Host did not provide boot injections')
+    return response.injections
+  }
+
   private async control(
     request: { readonly type: 'update-tasks'; readonly action: 'inspect' | 'lock' | 'unlock' } | { readonly type: 'quit-inspection' }
-      | { readonly type: 'file-drag-resource'; readonly address: string },
+      | { readonly type: 'file-drag-resource'; readonly address: string } | { readonly type: 'boot-injections' },
     deadlineMs: number, deadlineMessage: string, operation: string, signal?: AbortSignal,
   ): Promise<DesktopHostControlResponse> {
     const child = this.child
@@ -380,6 +432,10 @@ export class DesktopHostProcess {
     const child = this.child
     if (child === undefined) return
     this.stopping = true
+    this.nimiTextBridge?.dispose()
+    this.nimiTextBridge = undefined
+    this.nimiEcosystemBridge?.dispose()
+    this.nimiEcosystemBridge = undefined
     this.onPlatformSession?.(null)
     if (child.connected) child.send({ type: 'shutdown' }, (error) => { if (error !== null) this.fail(error) })
     const exited = this.exitPromise ?? Promise.resolve()
@@ -399,6 +455,10 @@ export class DesktopHostProcess {
   }
 
   private fail(error: Error): void {
+    this.nimiTextBridge?.dispose()
+    this.nimiTextBridge = undefined
+    this.nimiEcosystemBridge?.dispose()
+    this.nimiEcosystemBridge = undefined
     if (this.runId !== undefined) Object.assign(error, { hostRunId: this.runId })
     this.onPlatformSession?.(null)
     this.readyReject(error)

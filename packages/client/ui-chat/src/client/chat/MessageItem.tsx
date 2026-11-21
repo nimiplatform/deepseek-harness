@@ -128,17 +128,66 @@ function ModelRetryItem({ node, active, t }: {
   )
 }
 
+interface NimiAdoptBridge {
+  readonly protocolVersion?: number
+  readonly nimi?: {
+    adoptLatestRevision?(configRef?: string): Promise<void>
+  }
+}
+
+function getNimiAdoptRevision(): ((configRef?: string) => Promise<void>) | undefined {
+  const desktop = (globalThis as typeof globalThis & { dshDesktop?: NimiAdoptBridge }).dshDesktop
+  if (desktop?.protocolVersion !== 1) return undefined
+  return typeof desktop.nimi?.adoptLatestRevision === 'function' ? desktop.nimi.adoptLatestRevision : undefined
+}
+
 /** Persistent, turn-positioned feedback for a terminal failure. */
 function TurnErrorItem({ node, t }: {
   node: TurnErrorNode
   t: ChatViewSlotProps['t']
 }) {
+  const adoptRevision = node.code === 'AI_CONFIG_REVISION_CONFLICT' ? getNimiAdoptRevision() : undefined
+  const [adoptState, setAdoptState] = useState<'idle' | 'adopting' | 'adopted' | 'failed'>('idle')
+  useEffect(() => {
+    setAdoptState('idle')
+  }, [node.seq, node.code, node.message])
+
+  const handleAdopt = () => {
+    if (!adoptRevision || adoptState === 'adopting') return
+    setAdoptState('adopting')
+    void adoptRevision().then(
+      () => { setAdoptState('adopted') },
+      () => { setAdoptState('failed') },
+    )
+  }
+
   return (
     <div className={css.turnErrorRow} role="status">
       <StateDot state="error" className={css.turnErrorDot} />
       <div className={css.turnErrorCopy}>
         <span className={css.turnErrorTitle}>{node.code === 'ACCOUNT_SIGNED_OUT' || node.code === 'INTERRUPTED' ? t('message.taskStopped') : t('message.turnError')}</span>
         <span className={css.turnErrorMessage}>{failureMessage(node.message, node.code, t)}</span>
+        {adoptRevision !== undefined && (
+          <div className={css.turnErrorActions} data-nimi-conflict-recovery="true">
+            {adoptState !== 'adopted' ? (
+              <button
+                type="button"
+                className={css.turnErrorActionBtn}
+                disabled={adoptState === 'adopting'}
+                onClick={handleAdopt}
+              >
+                {adoptState === 'adopting'
+                  ? t('message.failure.aiConfigConflict.adopting')
+                  : t('message.failure.aiConfigConflict.adopt')}
+              </button>
+            ) : (
+              <span className={css.turnErrorActionNote}>{t('message.failure.aiConfigConflict.adopted')}</span>
+            )}
+            {adoptState === 'failed' && (
+              <span className={css.turnErrorActionError}>{t('message.failure.aiConfigConflict.failed')}</span>
+            )}
+          </div>
+        )}
       </div>
       {node.code !== undefined && node.code !== 'INTERRUPTED' && <code className={css.turnErrorCode}>{node.code}</code>}
     </div>

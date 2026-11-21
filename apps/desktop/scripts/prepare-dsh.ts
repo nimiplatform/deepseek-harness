@@ -146,10 +146,17 @@ async function main(): Promise<void> {
     const officeEngine = selectOfficeEngine(officeManifest, target)
     mkdirSync(DSH_OUTPUT_ROOT, { recursive: true })
     await packagingStep(process.env.DSH_DESKTOP_PACKAGING_RUN_DIR, 'runtime:materialize-modules', async () => {
+      const cuaBin = join('@deepseek-ai', 'dsh-cua-macos', 'native', 'bin')
+      const cuaStage = target.platform === 'darwin' && process.env.DSH_NIMI_LOCAL_BUILD === '1'
+        ? process.env.DSH_NIMI_CUA_RELEASE_DIR : undefined
       cpSync(modules, join(DSH_OUTPUT_ROOT, 'node_modules'), {
         recursive: true, dereference: true,
-        filter: source => desktopRuntimeFileExclusion(relative(modules, source), target, officeEngine) === undefined,
+        filter: source => !(cuaStage && source === join(modules, cuaBin))
+          && desktopRuntimeFileExclusion(relative(modules, source), target, officeEngine) === undefined,
       })
+      if (cuaStage) {
+        cpSync(cuaStage, join(DSH_OUTPUT_ROOT, 'node_modules', cuaBin, `darwin-${target.arch}`), { recursive: true })
+      }
     })
     writeFileSync(join(DSH_OUTPUT_ROOT, 'package.json'), `${JSON.stringify({
       name: '@deepseek-ai/dsh-desktop-runtime', private: true, version: release.version, type: 'module',

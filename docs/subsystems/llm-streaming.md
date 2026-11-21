@@ -236,6 +236,8 @@ interface LlmFailure {
   readonly message: string
   /** Stable provider-neutral machine-routing code. */
   readonly code: string
+  /** Bounded serializable adapter diagnostics retained through errors and Session records. */
+  readonly diagnostics?: Readonly<Record<string, string>>
   /** HTTP status returned by the provider, when available. */
   readonly status?: number
   /** Provider-requested delay in milliseconds, when valid and available. */
@@ -335,16 +337,17 @@ interface AppIdentity {
 
 ## `TokenUsage`
 
-Per-call token accounting. Counts are **disjoint**: `inputTokens` is uncached input only; cached input is reported separately, and billed input is the sum of the three. Adapters whose providers fold cache hits into a single prompt total (DeepSeek's `prompt_tokens`) subtract them back out. Optional `totalTokens` is an exact aggregate prompt-plus-output count preserved from the provider or reconstructed from authoritative aggregate counters; adapters omit it when unavailable or inconsistent. `reasoningTokens`, when present, is informational detail already included in `outputTokens`; totals must not add it again.
+Per-call token accounting. When a cache breakdown is reported, `inputTokens` is uncached input and the three input counts are disjoint. Adapters subtract reported cache hits from aggregate prompt counts. When the breakdown is unavailable, `inputTokens` contains aggregate input and both cache fields remain absent. This aggregate alone cannot establish a cache-dependent billing cost. Optional `totalTokens` is an exact aggregate prompt-plus-output count preserved from the provider or reconstructed from authoritative aggregate counters; adapters omit it when unavailable or inconsistent. `reasoningTokens`, when present, is informational detail already included in `outputTokens`; totals must not add it again.
 
 ```ts type-equiv
 /**
  * Token accounting for one model call (cache fields are optional).
  *
- * Counts are DISJOINT: `inputTokens` is uncached input only; cached input is
- * reported separately as `cacheReadTokens`/`cacheWriteTokens` (billed input =
- * sum of the three). Adapters whose providers fold cache hits into a total
- * prompt count (DeepSeek's `prompt_tokens`) subtract them out.
+ * When a cache breakdown is reported, input/cache counts are disjoint and
+ * their sum is aggregate input. Adapters subtract reported cache hits from
+ * aggregate prompt counts. When no breakdown is available, `inputTokens`
+ * holds aggregate input and both cache fields remain absent. Missing cache
+ * counts do not establish zero cache usage or a known billing cost.
  */
 interface TokenUsage {
   inputTokens: number
@@ -461,12 +464,14 @@ interface AdapterRegistrationHandle {
 ```
 
 ```ts type-equiv
-/** Display metadata for one registered provider route. */
+/** Metadata for one registered provider route. */
 interface LlmProviderInfo {
   /** Provider route key used by {@link GenerateOptions.provider}. */
   id: string
   /** Human-readable provider name for selectors and diagnostics. */
   name: string
+  /** Transport ceilings shared by the provider's models, independent of their token windows. */
+  requestEnvelope?: Readonly<{ maxMessages: number; maxBytes: number }>
 }
 ```
 
@@ -613,6 +618,8 @@ interface LlmModelReasoningInfo {
 ```ts type-equiv
 /** Exact-route model metadata resolved by its owning adapter. */
 interface LlmResolvedModelInfo extends LlmModelInfo {
+  /** Conservative request capacity advertised by the adapter when the full context window is unknown. */
+  requestCapacityFloorTokens?: number
   /** Provider-owned context capacity when known. */
   context?: LlmModelContext
   /** Adapter-configured per-request output cap materialized when callers omit one. */
@@ -961,6 +968,21 @@ declare abstract class LlmAdapter {
     _signal?: AbortSignal,
   ): Promise<LlmResolvedModelInfo>;
   /**
+   * Materialize or normalize a GUI/command model selection before validation
+   * and durable session persistence. Adapters that expose virtual route entries
+   * (such as Nimi Cloud/Local direct selection backed by canonical AppAIConfig
+   * records) override this to return the durable provider/model identity.
+   * @param provider - registered provider route selected by the caller.
+   * @param model - catalog model id selected by the caller.
+   * @param _signal - optional cancellation signal.
+   * @returns the normalized provider/model identity to validate and persist.
+   */
+  commitModelSelection(
+    provider: string,
+    model: string,
+    _signal?: AbortSignal,
+  ): Promise<{ readonly provider: string; readonly model: string }>;
+  /**
    * Bind exact model metadata and the eventual request dispatch to one adapter generation.
    * Dynamic adapters override this so settings changes between preparation and
    * dispatch cannot combine one generation's capabilities with another's endpoint.
@@ -1144,6 +1166,16 @@ async listModels(provider: string): Promise<LlmModelInfo[]>
  * @returns exact model identity plus available context and reasoning metadata.
  */
 async resolveModelInfo( provider: string, model: string, signal?: AbortSignal, ): Promise<LlmResolvedModelInfo>
+
+/**
+ * Materialize or normalize a caller's catalog selection through the owning adapter
+ * before capability validation and durable Session persistence.
+ * @param provider - registered provider route selected by the caller.
+ * @param model - catalog model id selected by the caller.
+ * @param signal - optional cancellation signal.
+ * @returns the durable provider/model identity returned by the adapter.
+ */
+async commitModelSelection( provider: string, model: string, signal?: AbortSignal, ): Promise<{ readonly provider: string; readonly model: string }>
 
 /**
  * Validate a conversation call config against its exact model capability and

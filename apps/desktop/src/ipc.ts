@@ -1,8 +1,32 @@
 import type { DesktopFileActions } from '@deepseek-ai/dsh-client-ui-file-actions/types'
 /** Typed preload operations exposed only by the Electron shell. */
 
-export type { DesktopChannelState, DesktopChannelChangeResult } from '@deepseek-ai/dsh-client-ui-settings-general/types'
-import type { DesktopChannelBridge, DesktopChannelState } from '@deepseek-ai/dsh-client-ui-settings-general/types'
+export type {
+  DesktopChannelState,
+  DesktopChannelChangeResult,
+  NimiDesktopAccount,
+  NimiDesktopAiConfigCloudConnectorOption,
+  NimiDesktopAiConfigCloudTargetOption,
+  NimiDesktopAiConfigEffectiveSelection,
+  NimiDesktopAiConfigIntent,
+  NimiDesktopAiConfigLocalLoadoutOption,
+  NimiDesktopAiConfigOptionsQuery,
+  NimiDesktopAiConfigOptionsResult,
+  NimiDesktopAiConfigOverwriteInput,
+  NimiDesktopAiConfigOverwriteResult,
+  NimiDesktopAiConfigQuery,
+  NimiDesktopAiConfigRecord,
+  NimiDesktopAiConfigRecordEdit,
+  NimiDesktopAiConfigSnapshot,
+  NimiDesktopBridge,
+  NimiDesktopConnectionStatus,
+  NimiDesktopHomeChatImportResult,
+  NimiDesktopHomeSection,
+  NimiDesktopIntegrationOperationView,
+  NimiDesktopIntegrationTargetView,
+  NimiDesktopState,
+} from '@deepseek-ai/dsh-client-ui-settings-general/types'
+import type { DesktopChannelBridge, DesktopChannelState, NimiDesktopBridge } from '@deepseek-ai/dsh-client-ui-settings-general/types'
 import type { DesktopKeyboardApi, DesktopShortcutsApi } from '@deepseek-ai/dsh-client-shortcuts/protocol'
 import type { IpcMainInvokeEvent } from 'electron'
 import type { DesktopBrowserBridge } from '@deepseek-ai/dsh-client-ui-sidebar-browser/types'
@@ -10,6 +34,19 @@ import type { DesktopFileDrag } from '@deepseek-ai/dsh-util-file-drag'
 
 /** IPC channel names kept private to the desktop application bundle. */
 export const DESKTOP_IPC = {
+  nimiSettings: 'dsh-desktop:nimi-settings',
+  nimiStateGet: 'dsh-desktop:nimi-state-get',
+  nimiStateChanged: 'dsh-desktop:nimi-state-changed',
+  nimiRecheck: 'dsh-desktop:nimi-recheck',
+  nimiOpenHome: 'dsh-desktop:nimi-open-home',
+  nimiAdoptRevision: 'dsh-desktop:nimi-adopt-revision',
+  nimiAiConfigGet: 'dsh-desktop:nimi-ai-config-get',
+  nimiAiConfigListOptions: 'dsh-desktop:nimi-ai-config-list-options',
+  nimiAiConfigOverwrite: 'dsh-desktop:nimi-ai-config-overwrite',
+  nimiIntegrationsList: 'dsh-desktop:nimi-integrations-list',
+  nimiImportHomeChat: 'dsh-desktop:nimi-import-home-chat',
+  nimiOpenSession: 'dsh-desktop:nimi-open-session',
+  nimiOpenSettings: 'dsh-desktop:nimi-open-settings',
   fileSave: 'dsh-desktop:file-save',
   clipboardImageRead: 'dsh-desktop:clipboard-image-read',
   shortcutsInput: 'dsh-desktop:shortcuts-input',
@@ -91,6 +128,8 @@ export interface DesktopUpdatePresentation {
 
 /** Product documents cannot supply update versions, package URLs, or installation authorization. */
 export interface DshDesktopProductApi {
+  /** Typed Nimi Desktop bridge exposed in Nimi-managed Desktop builds. */
+  readonly nimi?: NimiDesktopBridge
   readonly fileActions: DesktopFileActions
   readonly protocolVersion: 1
   readonly browser: DesktopBrowserBridge
@@ -102,7 +141,7 @@ export interface DshDesktopProductApi {
    * @returns `name=value` fields separated by `; `, with no hostname, user name, or serial number.
    */
   deviceInfo(): Promise<string>
-  readonly updates: {
+  readonly updates?: {
     readonly channels: DesktopChannelBridge
     status(): Promise<DesktopUpdatePresentation>
     open(): Promise<void>

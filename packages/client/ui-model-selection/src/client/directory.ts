@@ -159,7 +159,9 @@ export class ModelDirectory {
     if (this.disposed) return
     const catalog = this.catalog.store.getSnapshot()
     const projected = modelSelectionProjection(this.projected.getSnapshot())
-    const intended = projected?.next ?? catalog.value?.default
+    const rawIntended = projected?.next ?? catalog.value?.default
+    const groups = catalog.value?.groups ?? []
+    const intended = rawIntended === undefined ? undefined : normalizeNimiSelection(rawIntended, groups)
     const reasoning = intended === undefined ? undefined : this.catalog.reasoningFor(intended)
     const effort = intended?.reasoningEffort ?? reasoning?.defaultEffort
     const retainedEffort = effort === undefined ? undefined
@@ -169,7 +171,7 @@ export class ModelDirectory {
         current: catalog.value === null ? null : this.store.getSnapshot().current,
         ...retainedEffort === undefined ? {} : { retainedEffort },
         routable: null,
-        groups: catalog.value?.groups ?? [],
+        groups,
         failures: catalog.value?.failures ?? [],
         status: catalog.status === 'error' ? 'error' : 'loading',
         pending: this.store.getSnapshot().pending,
@@ -177,7 +179,7 @@ export class ModelDirectory {
       })
       return
     }
-    const selection = projected.next ?? catalog.value.default
+    const selection = normalizeNimiSelection(projected.next ?? catalog.value.default, catalog.value.groups)
     const routable = catalog.value.groups.some(group => group.id === selection.provider
       && group.models.some(model => model.id === selection.model))
     this.store.set({
@@ -193,6 +195,36 @@ export class ModelDirectory {
       error: null,
     })
   }
+}
+
+/**
+ * Resolve legacy Nimi model aliases (`configured`, `config.<ref>.<sha256>`) to the
+ * canonical `config.<ref>` entry currently advertised in the `nimi` group.
+ * @param selection - The model selection stored in the session.
+ * @param groups - The current provider catalog.
+ * @returns The selection to display in the picker.
+ */
+export function normalizeNimiSelection(
+  selection: ModelSelection,
+  groups: readonly ModelProviderGroup[],
+): ModelSelection {
+  if (selection.provider !== 'nimi') return selection
+  const nimiGroup = groups.find(group => group.id === 'nimi')
+  if (!nimiGroup || nimiGroup.models.length === 0) return selection
+  if (nimiGroup.models.some(model => model.id === selection.model)) return selection
+  if (selection.model === 'configured') {
+    const first = nimiGroup.models[0]
+    return first ? { ...selection, model: first.id } : selection
+  }
+  const legacy = /^config\.(main|[a-f0-9]{32})\.[a-f0-9]{64}$/.exec(selection.model)
+  const configRef = legacy?.[1]
+  if (configRef !== undefined) {
+    const stableId = `config.${configRef}`
+    if (nimiGroup.models.some(model => model.id === stableId)) {
+      return { ...selection, model: stableId }
+    }
+  }
+  return selection
 }
 
 function modelSelectionProjection(value: unknown): ModelSelectionProjection | undefined {

@@ -2,6 +2,7 @@
 
 import { delimiter, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { writeFile } from 'node:fs/promises'
 import type { PluginOperationRunId } from '@deepseek-ai/dsh-plugin-manager/diagnostic'
 import { formatFatalDiagnostic } from './fatal-diagnostic.ts'
 import { loadLayeredEnv, loadProfileDirectory, reportSkippedBundles } from '@deepseek-ai/dsh-app-boot'
@@ -17,6 +18,16 @@ import { installPlatformSessionPublisher } from './platform-session.ts'
 import { installOperationDiagnostics } from './operation-diagnostics.ts'
 import { DesktopAuthenticationEnd, receiveDesktopSecret } from './authentication.ts'
 import * as DesktopAuthentication from '@deepseek-ai/dsh-host-authentication-desktop'
+import { NIMI_LOCAL_PROVIDER_ID, NimiModelAdapter } from './nimi-model-adapter.ts'
+import {
+  ensureNimiRouteConfig,
+  listNimiModels,
+  listNimiRoutes,
+  readNimiModelInfo,
+  streamNimiText,
+  uploadNimiImage,
+} from './nimi-text-client.ts'
+import { installNimiEcosystemPlugin } from './nimi-ecosystem-plugin.ts'
 
 async function main(): Promise<void> {
   const runId = randomUUID() as PluginOperationRunId
@@ -40,6 +51,36 @@ async function main(): Promise<void> {
   }
   const runtimeDir = process.argv[2] as string
   const projectDir = process.argv[3] as string
+  const patchFiles: string[] = []
+  if (process.env.DSH_NIMI_TEXT === '1') {
+    const documentsDirectory = process.env.DSH_HOME
+    if (!documentsDirectory) throw new Error('Nimi DSH requires an account-scoped home.')
+    const patchPath = join(projectDir, 'nimi-desktop.patch.yml')
+    const browserExecutable = process.env.DSH_NIMI_BROWSER_EXECUTABLE
+    // A new managed registration creates its default workspace inside its own home.
+    await writeFile(patchPath, JSON.stringify([
+      { id: 'agent-default-model', config: { provider: 'nimi', model: 'configured' } },
+      { id: 'workspace-controller', config: { documentsDirectory } },
+      { id: 'llm-deepseek', disabled: true },
+      { id: 'llm-deepseek-account', disabled: true },
+      { id: 'llm-pi-ai', disabled: true },
+      // Nimi's profile keeps local session export. Upstream feedback, accounts,
+      // branding, DeepSeek web search/API, and product analytics are disabled.
+      ...['session-telemetry-otel', 'desktop-product-telemetry', 'product-analytics',
+        'ui-settings-session-log', 'ui-message-feedback', 'message-feedback', 'command-feedback',
+        'ui-settings-account', 'ui-account-notifications', 'ui-settings-models',
+        'ui-brand-official', 'deepseek-account', 'session-log-deepseek',
+        'plugin-package-inventory-deepseek', 'web-search-deepseek', 'web-deepseek-api',
+        'ui-settings-web-search',
+      ].map(id => ({ id, disabled: true })),
+      ...(browserExecutable ? [{ insert: [
+        { id: 'nimi-browser-use', name: '@deepseek-ai/dsh-browser-use' },
+        { id: 'nimi-browser-playwright', name: '@deepseek-ai/dsh-experimental-browser-use-playwright-mcp',
+          config: { mode: 'launch', headless: true, executablePath: browserExecutable } },
+      ] }] : []),
+    ]))
+    patchFiles.push(patchPath)
+  }
   // Set before the launch-environment snapshot and profile evaluation; empty means the payload sits beside the runtime directory.
   process.env.DSH_PRIMARY_RUNTIME = process.argv[4] || join(runtimeDir, '..', 'runtime', 'primary-runtime')
   const installAnchor = join(runtimeDir, 'node_modules', '@deepseek-ai', 'dsh', 'package.json')
@@ -49,7 +90,7 @@ async function main(): Promise<void> {
     environment: loadLayeredEnv('dsh'),
     profile: 'desktop',
     resolvedProfile: { profile, installAnchor },
-    patchFiles: [],
+    patchFiles,
     args: ['--no-open', '--host', '127.0.0.1', '--port', '0'],
     ...(process.argv[5] === undefined ? {} : {
       packageManager: {
@@ -67,6 +108,9 @@ async function main(): Promise<void> {
   const dragReads = new Map<number, AbortController>()
   const dragTasks = new Set<Promise<void>>()
   const control: {
+    bootInjections?: () => readonly unknown[]
+    refreshNimiModels?: () => void
+    adoptNimiRevision?: (configRef?: string) => void
     updateTasks?: ReturnType<typeof installDesktopUpdateTaskControl>
     quitInspection?: ReturnType<typeof installDesktopQuitInspection>
   } = {}
@@ -84,6 +128,24 @@ async function main(): Promise<void> {
   })()
   process.on('message', (message: unknown) => {
     if (typeof message !== 'object' || message === null || !('type' in message)) return
+    if (message.type === 'nimi-models-refresh') { control.refreshNimiModels?.(); return }
+    if (message.type === 'nimi-adopt-revision') {
+      const configRef = 'configRef' in message && typeof message.configRef === 'string' ? message.configRef : undefined
+      control.adoptNimiRevision?.(configRef)
+      return
+    }
+    if (message.type === 'boot-injections' && 'requestId' in message && Number.isSafeInteger(message.requestId)) {
+      const requestId = message.requestId
+      void (async () => {
+        try {
+          if (stopping || !control.bootInjections) throw new Error('Desktop workspace is unavailable')
+          await send({ type: 'boot-injections', requestId, injections: control.bootInjections() })
+        } catch (error) {
+          await send({ type: 'boot-injections', requestId, error: error instanceof Error ? error.message : 'Desktop workspace is unavailable' })
+        }
+      })().catch((error: unknown) => { console.error(error) })
+      return
+    }
     if (message.type === 'shutdown') { void stop(); return }
     if (message.type === 'file-drag-cancel') {
       if ('requestId' in message && typeof message.requestId === 'number') dragReads.get(message.requestId)?.abort()
@@ -144,6 +206,50 @@ async function main(): Promise<void> {
   if (authentication.signal.aborted) onAuthenticationEnd()
   process.once('disconnect', () => { void stop() })
   const { ctx } = await application
+  if (process.env.DSH_NIMI_TEXT === '1') {
+    let syncInFlight: Promise<void> | undefined
+    let registeredProviders: string[] = ['nimi', NIMI_LOCAL_PROVIDER_ID]
+    const syncNimiProviders = (): Promise<void> => {
+      syncInFlight ??= (async () => {
+        try {
+          await nimiAdapter.refreshRoutes(undefined, true)
+          const nextProviders = nimiAdapter.providerIds()
+          const changed = nextProviders.length !== registeredProviders.length
+            || nextProviders.some((id, idx) => id !== registeredProviders[idx])
+          if (changed) {
+            registeredProviders = nextProviders
+            registration.replace(nextProviders)
+          } else {
+            for (const provider of registeredProviders) ctx.emit('llm/models-updated', provider)
+          }
+        } catch {
+          for (const provider of registeredProviders) ctx.emit('llm/models-updated', provider)
+        } finally {
+          syncInFlight = undefined
+        }
+      })()
+      return syncInFlight
+    }
+    const nimiAdapter = new NimiModelAdapter({
+      provider: 'nimi', id: 'configured', name: 'Nimi Home model',
+    }, streamNimiText, async (ref, signal) => {
+      const image = await ctx.attachments.readImage(ref, signal)
+      return uploadNimiImage(image.data, image.ref.mediaType, signal)
+    }, readNimiModelInfo, listNimiModels, {
+      listRoutes: listNimiRoutes,
+      ensureRouteConfig: ensureNimiRouteConfig,
+      onCatalogChanged: () => { void syncNimiProviders() },
+    })
+    const registration = ctx.llm.registerAdapter(registeredProviders, nimiAdapter)
+    control.refreshNimiModels = () => { void syncNimiProviders() }
+    control.adoptNimiRevision = (configRef) => {
+      nimiAdapter.adoptLatestRevision(configRef)
+      void syncNimiProviders()
+    }
+    await syncNimiProviders().catch(() => undefined)
+    const ecosystem = installNimiEcosystemPlugin(ctx)
+    ctx.effect(() => () => { ecosystem.dispose() }, 'desktop-host: nimi ecosystem plugin')
+  }
   const canPublish = (): boolean => stopping === undefined && process.connected && !authentication.signal.aborted
   if (!canPublish()) return
   ctx.effect(() => () => {
@@ -158,12 +264,13 @@ async function main(): Promise<void> {
   })
   await ctx.plugin(DesktopAuthentication, { readSecret: () => secret }).await()
   if (!canPublish()) return
-  const admission = ctx.connection.authentication.authenticate({
-    headers: { cookie: `dsh-desktop-session=${secret}` },
-  })
-  if ('rejection' in admission) throw new Error('Desktop authentication provider did not accept its startup credential')
   const url = `${ctx.webServer.protocol}//127.0.0.1:${String(ctx.webServer.port)}/`
-  const injections = ctx.webServer.collectIndexInjections(admission.peer)
+  control.bootInjections = () => {
+    const admission = ctx.connection.authentication.authenticate({ headers: { cookie: `dsh-desktop-session=${secret}` } })
+    if ('rejection' in admission) throw new Error('Desktop authentication provider did not admit the workspace')
+    return ctx.webServer.collectIndexInjections(admission.peer)
+  }
+  const injections = control.bootInjections()
   if (!canPublish()) return
   process.send?.({ type: 'ready', url, injections }, (error) => { if (error !== null) console.error(error) })
 }

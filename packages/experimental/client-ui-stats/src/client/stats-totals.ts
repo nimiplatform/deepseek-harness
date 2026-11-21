@@ -15,17 +15,17 @@ export function totalsFromProjections(
   usage: TokenUsageProjection | undefined,
 ): StatsTotals | null {
   if (stats === undefined || usage === undefined) return null
-  const context = usage.uncachedInputTokens + usage.cacheReadTokens + usage.cacheWriteTokens
+  const context = usage.uncachedInputTokens + usage.cacheReadTokens + usage.cacheWriteTokens + (usage.unclassifiedInputTokens ?? 0)
   const active = stats.steps === 0 ? null : stats.llmMs + stats.toolMs
   return {
     turnCount: stats.turns,
     stepCount: stats.steps,
     context: stats.steps === 0 ? null : context,
     output: stats.steps === 0 ? null : usage.outputTokens,
-    cacheHit: context > 0 ? Math.min(1, usage.cacheReadTokens / context) : null,
-    cacheRead: stats.steps === 0 ? null : usage.cacheReadTokens,
-    cacheWrite: stats.steps === 0 ? null : usage.cacheWriteTokens,
-    cacheContext: stats.steps === 0 ? null : context,
+    cacheHit: !usage.unclassifiedInputTokens && context > 0 ? Math.min(1, usage.cacheReadTokens / context) : null,
+    cacheRead: stats.steps === 0 || usage.unclassifiedInputTokens ? null : usage.cacheReadTokens,
+    cacheWrite: stats.steps === 0 || usage.unclassifiedInputTokens ? null : usage.cacheWriteTokens,
+    cacheContext: stats.steps === 0 || usage.unclassifiedInputTokens ? null : context,
     ttft: stats.ttftSteps === 0 ? null : stats.ttftMs,
     ttftPending: 0,
     model: stats.steps === 0 ? null : stats.llmMs,

@@ -1,7 +1,7 @@
 /** Build and launch the unpackaged Electron shell against the current workspace. */
 
 import { spawn, execFileSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
@@ -53,7 +53,8 @@ async function runPackageScript(script: string, cwd: string): Promise<void> {
   if (packageManager === undefined || packageManager === '') {
     throw new Error('desktop development: invoke this launcher through pnpm run dev:desktop or start:desktop')
   }
-  await run(process.execPath, [packageManager, 'run', script], cwd)
+  const jsEntry = /\.[cm]?js$/u.test(packageManager)
+  await run(jsEntry ? process.execPath : packageManager, [...jsEntry ? [packageManager] : [], 'run', script], cwd)
 }
 
 async function launchElectron(): Promise<void> {
@@ -91,7 +92,14 @@ async function launchElectron(): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  const { values } = parseArgs({ options: { 'skip-build': { type: 'boolean', default: false } } })
+  const { values } = parseArgs({ options: {
+    'skip-build': { type: 'boolean', default: false },
+    'prepare-only': { type: 'boolean', default: false },
+    'runtime-descriptor': { type: 'string' },
+  } })
+  if (values['runtime-descriptor'] !== undefined && !values['prepare-only']) {
+    throw new Error('desktop development: --runtime-descriptor requires --prepare-only')
+  }
   if (!values['skip-build']) {
     await runPackageScript('build:artifacts', REPOSITORY_ROOT)
     await runPackageScript('build', APP_ROOT)
@@ -104,16 +112,18 @@ async function main(): Promise<void> {
   }
   const version = packageVersion(join(APP_ROOT, 'package.json'), 'desktop package')
   const pnpmVersion = packageVersion(join(APP_ROOT, 'node_modules', 'pnpm', 'package.json'), 'pnpm package')
+  const workerExecutable: string = createRequire(import.meta.url)('electron')
+  const projectDir = join(DEVELOPMENT_ROOT, 'project')
   const release: DesktopRelease = {
     schemaVersion: 1,
     version,
     hostProtocolVersion: DESKTOP_HOST_PROTOCOL_VERSION,
-    nodeVersion: execFileSync(createRequire(import.meta.url)('electron') as string, ['-p', 'process.versions.node'],
+    nodeVersion: execFileSync(workerExecutable, ['-p', 'process.versions.node'],
       { encoding: 'utf8', env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } }).trim(),
     pnpmVersion,
   }
   prepareDevelopmentProject({
-    projectDir: join(DEVELOPMENT_ROOT, 'project'),
+    projectDir,
     cliDir: join(REPOSITORY_ROOT, 'apps', 'cli'),
     hostDir: join(REPOSITORY_ROOT, 'apps', 'desktop-host'),
     dependencyDir: join(REPOSITORY_ROOT, 'node_modules', '.pnpm', 'node_modules'),
@@ -121,7 +131,14 @@ async function main(): Promise<void> {
     target: resolveDesktopBuildTarget(),
   })
   await preparePrimaryRuntime()
-  await launchElectron()
+  if (values['runtime-descriptor'] !== undefined) {
+    const chrome = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+    writeFileSync(values['runtime-descriptor'], JSON.stringify({
+      workerExecutable, projectDir, primaryRuntime: developmentRuntimeDirectory(),
+      ...(process.platform === 'darwin' && existsSync(chrome) ? { browserExecutable: chrome } : {}),
+    }))
+  }
+  if (!values['prepare-only']) await launchElectron()
 }
 
 await main().catch((error: unknown) => {
